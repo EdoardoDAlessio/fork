@@ -29,6 +29,7 @@ extern int cr_check(void);
 extern int check_caps(void);
 extern int cr_dedup(void);
 extern int cr_lazy_pages(bool daemon);
+extern int cr_dsm(bool daemon);
 
 extern int check_add_feature(char *arg);
 extern void pr_check_features(const char *offset, const char *sep, int width);

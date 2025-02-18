@@ -102,6 +102,8 @@ static int parse_criu_mode(char *mode)
 		opts.mode = CR_EXEC_DEPRECATED;
 	else if (!strcmp(mode, "show"))
 		opts.mode = CR_SHOW_DEPRECATED;
+	else if (!strcmp(mode, "dsm"))
+		opts.mode = CR_DSM;
 	else
 		return -1;
 
@@ -322,7 +324,6 @@ int main(int argc, char *argv[], char *envp[])
 
 	if (opts.mode == CR_LAZY_PAGES)
 		return cr_lazy_pages(opts.daemon_mode) != 0;
-
 
 	if (opts.mode == CR_DSM)
 		return cr_dsm(opts.daemon_mode) != 0;

@@ -1475,3 +1475,125 @@ int cr_lazy_pages(bool daemon)
 	xfree(events);
 	return ret;
 }
+
+
+
+int cr_dsm(bool daemon)
+{
+	struct epoll_event *events = NULL;
+	int nr_fds;
+	int lazy_sk;
+	int ret;
+
+	if (!kdat.has_uffd)
+		return -1;
+
+	if (prepare_dummy_pstree())
+		return -1;
+
+	lazy_sk = prepare_lazy_socket();
+	if (lazy_sk < 0)
+		return -1;
+
+	if (daemon) {
+		ret = cr_daemon(1, 0, -1);
+		if (ret == -1) {
+			pr_err("Can't run in the background\n");
+			return -1;
+		}
+		if (ret > 0) { /* parent task, daemon started */
+			if (opts.pidfile) {
+				if (write_pidfile(ret) == -1) {
+					pr_perror("Can't write pidfile");
+					kill(ret, SIGKILL);
+					waitpid(ret, NULL, 0);
+					return -1;
+				}
+			}
+
+			return 0;
+		}
+	}
+
+	if (status_ready())
+		return -1;
+
+	/*
+	 * we poll nr_tasks userfault fds, UNIX socket between lazy-pages
+	 * daemon and the cr-restore, and, optionally TCP socket for
+	 * remote pages
+	 */
+	nr_fds = task_entries->nr_tasks + (opts.use_page_server ? 2 : 1);
+	epollfd = epoll_prepare(nr_fds, &events);
+	if (epollfd < 0)
+		return -1;
+
+	if (prepare_uffds(lazy_sk, epollfd)) {
+		xfree(events);
+		return -1;
+	}
+
+	if (opts.use_page_server) {
+		if (connect_to_page_server_to_recv(epollfd)) {
+			xfree(events);
+			return -1;
+		}
+	}
+
+	ret = handle_requests_dsm(epollfd, &events, nr_fds);
+
+	disconnect_from_page_server();
+
+	xfree(events);
+	return ret;
+}
+
+
+static int handle_requests_dsm(int epollfd, struct epoll_event **events, int nr_fds)
+{
+	struct lazy_pages_info *lpi, *n;
+	int poll_timeout = -1;
+	int ret;
+
+	for (;;) {
+		ret = epoll_run_rfds(epollfd, *events, nr_fds, poll_timeout);
+		if (ret < 0)
+			goto out;
+		if (ret > 0) {
+			ret = complete_forks(epollfd, events, &nr_fds);
+			if (ret < 0)
+				goto out;
+			if (restore_finished)
+				poll_timeout = 0;
+			if (!restore_finished || !ret)
+				continue;
+		}
+
+		/* make sure we return success if there is nothing to xfer */
+		ret = 0;
+
+		list_for_each_entry_safe(lpi, n, &lpis, l) {
+			if (!list_empty(&lpi->iovs) && list_empty(&lpi->reqs)) {
+				ret = xfer_pages(lpi);
+				if (ret < 0)
+					goto out;
+				break;
+			}
+
+			if (list_empty(&lpi->reqs)) {
+				lazy_pages_summary(lpi);
+				list_del(&lpi->l);
+				lpi_put(lpi);
+			}
+		}
+
+		if (list_empty(&lpis)) {
+			// Instead of breaking, sleep briefly or wait on a new event
+			sleep(1);
+			continue;
+		}
+	}
+
+	out:
+		return ret;
+}
