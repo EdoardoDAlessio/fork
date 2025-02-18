@@ -27,7 +27,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>  // Fixes inet_pton issue
 #include <string.h>      // Fixes possible missing string functions
-
+#include <arpa/inet.h>
 
 #include "parasite.h"
 #include "log.h"

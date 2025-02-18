@@ -1,5 +1,4 @@
-# here is a workaround for a bug in libnl-3:
-# 6a8d90f5fec4 "attr: Allow attribute type 0"
+# Ensure necessary flags are included
 WRAPFLAGS		+= -Wl,--wrap=nla_parse,--wrap=nlmsg_parse
 
 ARCH_DIR		:= criu/arch/$(ARCH)
@@ -12,15 +11,13 @@ ifeq ($(filter clean mrproper,$(MAKECMDGOALS)),)
         CFLAGS_PIE	+= $(shell $(COMPEL_BIN) cflags)
 endif
 
-#
 # Configuration file paths
 CONFIG-DEFINES		+= -DSYSCONFDIR='"/etc"'
 CONFIG-DEFINES		+= -DGLOBAL_CONFIG_DIR='"/etc/criu/"'
 CONFIG-DEFINES		+= -DDEFAULT_CONFIG_FILENAME='"default.conf"'
 CONFIG-DEFINES		+= -DUSER_CONFIG_DIR='".criu/"'
 
-#
-# General flags.
+# General flags
 CFLAGS			+= -fno-strict-aliasing
 CFLAGS			+= -iquote criu/include
 CFLAGS			+= -iquote include
@@ -48,13 +45,11 @@ ARCH-LIB		:= $(ARCH_DIR)/crtools.built-in.o
 $(ARCH-LIB): .FORCE
 	$(Q) $(MAKE) $(build)=$(ARCH_DIR) all
 
-#
-# PIE library code.
+# PIE library code
 criu/pie/pie.lib.a: $(ARCH-LIB) .FORCE
 	$(Q) $(MAKE) $(call build-as,Makefile.library,criu/pie) all
 
-#
-# PIE code blobs themseves.
+# PIE code blobs themselves
 pie: criu/pie/pie.lib.a
 	$(Q) $(MAKE) $(build)=criu/pie all
 .PHONY: pie
@@ -87,6 +82,20 @@ $(obj)/criu: $(PROGRAM-BUILTINS)
 	$(call msg-link, $@)
 	$(Q) $(CC) $(CFLAGS) $^ $(LDFLAGS) $(LIBS) $(WRAPFLAGS) $(GMONLDOPT) -rdynamic -o $@
 
+# Add Compilation for dsm_client
+dsm_client: dsm_client.o parsemap.o criu/cr-dsm.o
+	$(Q) $(CC) $(CFLAGS) -o dsm_client dsm_client.o parsemap.o criu/cr-dsm.o ../compel/libcompel.a -lpthread
+
+dsm_client.o: dsm_client.c
+	$(Q) $(CC) $(CFLAGS) -c -o dsm_client.o dsm_client.c
+
+parsemap.o: parsemap.c
+	$(Q) $(CC) $(CFLAGS) -c -o parsemap.o parsemap.c
+
+criu/cr-dsm.o: criu/cr-dsm.c
+	$(Q) $(CC) $(CFLAGS) -c -o criu/cr-dsm.o criu/cr-dsm.c
+
+# Unit tests
 UNIT-BUILTINS		+= $(obj)/util.o
 UNIT-BUILTINS		+= $(obj)/config.o
 UNIT-BUILTINS		+= $(obj)/log.o
@@ -109,7 +118,6 @@ unittest: $(obj)/unittest/unittest
 
 .PHONY: unittest
 
-#
 # Clean the most, except generated c files
 subclean:
 	$(Q) $(RM) $(obj)/*.{gcda,gcno,gcov}
@@ -124,7 +132,6 @@ subclean:
 cleanup-y      += $(obj)/criu
 clean: subclean
 
-#
 # Delete all generated files
 subproper:
 	$(Q) $(MAKE) $(build)=$(ARCH_DIR) mrproper
@@ -157,4 +164,4 @@ uninstall:
 	$(Q) $(RM) $(addprefix $(DESTDIR)$(LIBEXECDIR)/criu/scripts/,systemd-autofs-restart.sh)
 .PHONY: uninstall
 
-all-y += check-packages $(obj)/criu
+all-y += check-packages $(obj)/criu $(obj)/dsm_client

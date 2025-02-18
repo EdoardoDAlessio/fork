@@ -169,9 +169,18 @@ HOSTCFLAGS		+= $(WARNINGS) $(DEFINES) -iquote include/
 export AFLAGS CFLAGS USERCLFAGS HOSTCFLAGS
 
 # Default target
-all: criu lib crit cuda_plugin
+all: criu lib crit cuda_plugin dsm_client
 .PHONY: all
 
+
+dsm_client: dsm_client.o parsemap.o criu/cr-dsm.o
+	$(Q) $(CC) $(CFLAGS) -o dsm_client dsm_client.o parsemap.o criu/cr-dsm.o ../compel/libcompel.a -lpthread
+
+dsm_client.o: dsm_client.c
+	$(Q) $(CC) $(CFLAGS) -c -o dsm_client.o dsm_client.c
+
+parsemap.o: parsemap.c
+	$(Q) $(CC) $(CFLAGS) -c -o parsemap.o parsemap.c
 #
 # Version headers.
 include Makefile.versions
