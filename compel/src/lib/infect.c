@@ -44,6 +44,9 @@
 #define SECCOMP_MODE_DISABLED 0
 #endif
 
+
+int g_create_rand_socket_id=0;
+
 static int prepare_thread(int pid, struct thread_ctx *ctx);
 
 static inline void close_safe(int *pfd)
@@ -377,7 +380,7 @@ int compel_resume_task_sig(pid_t pid, int orig_st, int st, int stop_signo)
 {
 	int ret = 0;
 
-	pr_debug("\tUnseizing %d into %d\n", pid, st);
+	//pr_debug("\tUnseizing %d into %d\n", pid, st);
 
 	if (st == COMPEL_TASK_DEAD) {
 		kill(pid, SIGKILL);
@@ -441,8 +444,14 @@ static int prepare_tsock(struct parasite_ctl *ctl, pid_t pid, struct parasite_in
 	socklen_t sk_len;
 	struct sockaddr_un addr;
 
-	pr_info("Putting tsock into pid %d\n", pid);
-	args->h_addr_len = gen_parasite_saddr(&args->h_addr, getpid());
+ 	/*
+                TODO: when multiple parasite injections are done over a victim process,
+                there is socket address collition. Need to add a proper fix
+        */
+	if(g_create_rand_socket_id)
+		args->h_addr_len = gen_parasite_saddr(&args->h_addr, getpid()  + rand());
+	else
+		args->h_addr_len = gen_parasite_saddr(&args->h_addr, getpid());
 
 	ssock = ctl->ictx.sock;
 	sk_len = sizeof(addr);
@@ -604,7 +613,8 @@ static int parasite_trap(struct parasite_ctl *ctl, pid_t pid, user_regs_struct_t
 	}
 
 	if (WSTOPSIG(status) != SIGTRAP || siginfo.si_code != ARCH_SI_TRAP) {
-		pr_debug("** delivering signal %d si_code=%d\n", siginfo.si_signo, siginfo.si_code);
+		//pr_debug("** delivering signal %d si_code=%d\n",
+		//	 siginfo.si_signo, siginfo.si_code);
 
 		pr_err("Unexpected %d task interruption, aborting\n", pid);
 		goto err;
@@ -720,7 +730,7 @@ static int parasite_init_daemon(struct parasite_ctl *ctl)
 	if (compel_util_send_fd(ctl, ctl->ictx.log_fd))
 		goto err;
 
-	pr_info("Wait for parasite being daemonized...\n");
+	////pr_info("Wait for parasite being daemonized...\n");
 
 	if (parasite_wait_ack(ctl->tsock, PARASITE_CMD_INIT_DAEMON, &m)) {
 		pr_err("Can't switch parasite %d to daemon mode %d\n", pid, m.err);
@@ -729,7 +739,7 @@ static int parasite_init_daemon(struct parasite_ctl *ctl)
 
 	ctl->sigreturn_addr = (void *)(uintptr_t)args->sigreturn_addr;
 	ctl->daemonized = true;
-	pr_info("Parasite %d has been switched to daemon mode\n", pid);
+	//pr_info("Parasite %d has been switched to daemon mode\n", pid)
 	return 0;
 err:
 	return -1;
@@ -880,7 +890,7 @@ static int parasite_memfd_exchange(struct parasite_ctl *ctl, unsigned long size,
 	parasite_memfd_close(ctl, fd);
 	close(lfd);
 
-	pr_info("Set up parasite blob using memfd\n");
+	//pr_info("Set up parasite blob using memfd\n");
 	return 0;
 
 err_curef:
@@ -958,7 +968,7 @@ static int compel_map_exchange(struct parasite_ctl *ctl, unsigned long size)
 
 	ret = parasite_memfd_exchange(ctl, size, remote_prot);
 	if (ret == 1) {
-		pr_info("MemFD parasite doesn't work, goto legacy mmap\n");
+		//pr_info("MemFD parasite doesn't work, goto legacy mmap\n");
 		ret = parasite_mmap_exchange(ctl, size, remote_prot);
 		if (ret)
 			return ret;
@@ -1087,6 +1097,9 @@ int compel_infect_no_daemon(struct parasite_ctl *ctl, unsigned long nr_threads, 
 		goto err;
 	}
 
+	//if (parasite_start_daemon(ctl))
+		//goto err;
+
 	return 0;
 
 err:
@@ -1124,11 +1137,16 @@ struct parasite_thread_ctl *compel_prepare_thread(struct parasite_ctl *ctl, int 
 
 static int prepare_thread(int pid, struct thread_ctx *ctx)
 {
-	if (ptrace(PTRACE_GETSIGMASK, pid, sizeof(k_rtsigset_t), &ctx->sigmask)) {
-		pr_perror("can't get signal blocking mask for %d", pid);
-		return -1;
-	}
 
+	// CRIU-DSM: Workaround when process reaches invalid state
+	while (1){
+		if (ptrace(PTRACE_GETSIGMASK, pid, sizeof(k_rtsigset_t), &ctx->sigmask)) {
+			pr_perror("can't get signal blocking mask for %d", pid);
+			sleep(1);
+			continue;
+		}
+		break;
+	}
 	if (ptrace_get_regs(pid, &ctx->regs)) {
 		pr_perror("Can't obtain registers (pid: %d)", pid);
 		return -1;
@@ -1220,7 +1238,7 @@ static int make_sock_for(int pid)
 	int ret, mfd, fd, sk = -1;
 	char p[32];
 
-	pr_debug("Preparing seqsk for %d\n", pid);
+	//pr_debug("Preparing seqsk for %d\n", pid);
 
 	sprintf(p, "/proc/%d/ns/net", pid);
 	fd = open(p, O_RDONLY);
@@ -1398,13 +1416,13 @@ static int parasite_fini_seized(struct parasite_ctl *ctl)
 		return -1;
 	}
 
-	pr_debug("Waiting for %d to trap\n", pid);
+	//pr_debug("Waiting for %d to trap\n", pid);
 	if (wait4(pid, &status, __WALL, NULL) != pid) {
 		pr_perror("Waited pid mismatch (pid: %d)", pid);
 		return -1;
 	}
 
-	pr_debug("Daemon %d exited trapping\n", pid);
+	//pr_debug("Daemon %d exited trapping\n", pid);
 	if (!WIFSTOPPED(status)) {
 		pr_err("Task is still running (pid: %d, status: 0x%x)\n", pid, status);
 		return -1;
@@ -1666,7 +1684,7 @@ int compel_stop_on_syscall(int tasks, const int sys_nr, const int sys_nr_compat)
 		if (!task_is_trapped(status, pid))
 			return -1;
 
-		pr_debug("%d was trapped\n", pid);
+		//pr_debug("%d was trapped\n", pid);
 
 		if ((WSTOPSIG(status) & PTRACE_SYSCALL_TRAP) == 0) {
 			/*
@@ -1682,7 +1700,7 @@ int compel_stop_on_syscall(int tasks, const int sys_nr, const int sys_nr_compat)
 		}
 		if (trace == TRACE_EXIT) {
 			trace = TRACE_ENTER;
-			pr_debug("`- Expecting exit\n");
+			//pr_debug("`- Expecting exit\n");
 			goto goon;
 		}
 		if (trace == TRACE_ENTER)
@@ -1714,7 +1732,7 @@ int compel_stop_on_syscall(int tasks, const int sys_nr, const int sys_nr_compat)
 			if (!task_is_trapped(status, pid))
 				return -1;
 
-			pr_debug("%d was stopped\n", pid);
+			//pr_debug("%d was stopped\n", pid);
 			tasks--;
 			continue;
 		}

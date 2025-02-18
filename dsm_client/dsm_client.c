@@ -25,6 +25,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>  // Fixes inet_pton issue
+#include <string.h>      // Fixes possible missing string functions
+
 
 #include "parasite.h"
 #include "log.h"
@@ -36,7 +39,7 @@
 
 #include "../criu/user.h"
 
-#define err_and_ret(msg) do { fprintf(stderr, msg);  return -1; } while (0)
+#define err_and_ret(msg) do { fprintf(stderr, msg);  return ; } while (0)
 
 #define MAX_THREADS 10
 #define MAX_STRING 250
@@ -177,7 +180,7 @@ int get_thread_ids(pid_t *thread_id, pid_t pid, size_t *entries, size_t max_size
 static int connect_page_data_server(){
 
 	printf("connect_page_data_server\n");
-	int sock = 0, valread;
+	int sock = 0://, valread;
 	struct sockaddr_in serv_addr;
 
 	// create socket
@@ -205,7 +208,7 @@ static int connect_page_data_server(){
 
 static int connect_server(){
 
-	int sock = 0, valread;
+	int sock = 0://, valread;
 	struct sockaddr_in serv_addr;
 
 	// create socket
@@ -254,7 +257,7 @@ static int get_page_data_from_origin(int sock,long addr,unsigned char *page_cont
 static void *handler(void *arg)
 {
 	struct params *p = arg;
-	char buf[page_size];
+	//char buf[page_size];
 
 
 	for (;;) {
@@ -437,8 +440,8 @@ int addr_to_index(long long addr){
 
 static int get_page_list_from_origin(int sock){
 
-    int  valread;
-    struct sockaddr_in serv_addr;
+    //int  valread;
+    //struct sockaddr_in serv_addr;
     struct msg_info page_list_msg;
 
     page_list_msg.msg_type = MSG_GET_PAGE_LIST;
@@ -459,7 +462,7 @@ static int get_page_list_from_origin(int sock){
 	printf("i=%d 0x%lx \n",i,page_list_data[i].saddr);	
     }
 #endif
-
+    return 0;
 }
 
 
@@ -491,7 +494,7 @@ void invalidate_restored_pages(long *addr,int length,int pid,	struct parasite_ct
 			*arg = 	page_list_data[i].saddr ;
 			if (compel_rpc_call_sync(EXEC_MADVISE, ctl))
 				err_and_ret("Can't run parasite command 1");
-			printf("madvise Success for %llx\n", *arg);
+			printf("madvise Success for %lx\n", *arg);
 			page_list_data[i].state = PAGE_INVALID;
 		}
 	}
