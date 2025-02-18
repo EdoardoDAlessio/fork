@@ -1477,6 +1477,55 @@ int cr_lazy_pages(bool daemon)
 }
 
 
+static int handle_requests_dsm(int epollfd, struct epoll_event **events, int nr_fds)
+{
+	struct lazy_pages_info *lpi, *n;
+	int poll_timeout = -1;
+	int ret;
+
+	for (;;) {
+		ret = epoll_run_rfds(epollfd, *events, nr_fds, poll_timeout);
+		if (ret < 0)
+			goto out;
+		if (ret > 0) {
+			ret = complete_forks(epollfd, events, &nr_fds);
+			if (ret < 0)
+				goto out;
+			if (restore_finished)
+				poll_timeout = 0;
+			if (!restore_finished || !ret)
+				continue;
+		}
+
+		/* make sure we return success if there is nothing to xfer */
+		ret = 0;
+
+		list_for_each_entry_safe(lpi, n, &lpis, l) {
+			if (!list_empty(&lpi->iovs) && list_empty(&lpi->reqs)) {
+				ret = xfer_pages(lpi);
+				if (ret < 0)
+					goto out;
+				break;
+			}
+
+			if (list_empty(&lpi->reqs)) {
+				lazy_pages_summary(lpi);
+				list_del(&lpi->l);
+				lpi_put(lpi);
+			}
+		}
+
+		if (list_empty(&lpis)) {
+			// Instead of breaking, sleep briefly or wait on a new event
+			sleep(1);
+			continue;
+		}
+	}
+
+	out:
+		return ret;
+}
+
 
 int cr_dsm(bool daemon)
 {
@@ -1548,52 +1597,3 @@ int cr_dsm(bool daemon)
 	return ret;
 }
 
-
-static int handle_requests_dsm(int epollfd, struct epoll_event **events, int nr_fds)
-{
-	struct lazy_pages_info *lpi, *n;
-	int poll_timeout = -1;
-	int ret;
-
-	for (;;) {
-		ret = epoll_run_rfds(epollfd, *events, nr_fds, poll_timeout);
-		if (ret < 0)
-			goto out;
-		if (ret > 0) {
-			ret = complete_forks(epollfd, events, &nr_fds);
-			if (ret < 0)
-				goto out;
-			if (restore_finished)
-				poll_timeout = 0;
-			if (!restore_finished || !ret)
-				continue;
-		}
-
-		/* make sure we return success if there is nothing to xfer */
-		ret = 0;
-
-		list_for_each_entry_safe(lpi, n, &lpis, l) {
-			if (!list_empty(&lpi->iovs) && list_empty(&lpi->reqs)) {
-				ret = xfer_pages(lpi);
-				if (ret < 0)
-					goto out;
-				break;
-			}
-
-			if (list_empty(&lpi->reqs)) {
-				lazy_pages_summary(lpi);
-				list_del(&lpi->l);
-				lpi_put(lpi);
-			}
-		}
-
-		if (list_empty(&lpis)) {
-			// Instead of breaking, sleep briefly or wait on a new event
-			sleep(1);
-			continue;
-		}
-	}
-
-	out:
-		return ret;
-}
