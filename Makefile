@@ -19,7 +19,7 @@ endif
 
 #
 # Supported Architectures
-ifneq ($(filter-out x86 arm aarch64 ppc64 s390 mips loongarch64 riscv64,$(ARCH)),)
+ifneq ($(filter-out x86 arm aarch64 ppc64 s390 mips loongarch64,$(ARCH)),)
         $(error "The architecture $(ARCH) isn't supported")
 endif
 
@@ -82,10 +82,6 @@ endif
 
 ifeq ($(ARCH),loongarch64)
         DEFINES		:= -DCONFIG_LOONGARCH64
-endif
-
-ifeq ($(ARCH),riscv64)
-        DEFINES		:= -DCONFIG_RISCV64
 endif
 
 #
@@ -169,7 +165,7 @@ HOSTCFLAGS		+= $(WARNINGS) $(DEFINES) -iquote include/
 export AFLAGS CFLAGS USERCLFAGS HOSTCFLAGS
 
 # Default target
-all: criu lib crit cuda_plugin dsm_client
+all: criu lib crit cuda_plugin
 .PHONY: all
 
 #
@@ -314,7 +310,7 @@ clean-top:
 
 clean: clean-top clean-amdgpu_plugin clean-cuda_plugin
 
-mrproper-top: clean-top clean-amdgpu_plugin clean-cuda_plugin clean-dsm_client
+mrproper-top: clean-top clean-amdgpu_plugin clean-cuda_plugin
 	$(Q) $(RM) $(CONFIG_HEADER)
 	$(Q) $(RM) $(VERSION_HEADER)
 	$(Q) $(RM) $(COMPEL_VERSION_HEADER)
@@ -325,17 +321,6 @@ mrproper-top: clean-top clean-amdgpu_plugin clean-cuda_plugin clean-dsm_client
 .PHONY: mrproper-top
 
 mrproper: mrproper-top
-
-
-# DSM client rules
-.PHONY: dsm_client clean-dsm_client
-dsm_client:
-	$(Q) $(MAKE) -C dsm_client
-
-clean-dsm_client:
-	$(Q) $(MAKE) -C dsm_client clean
-
-
 
 #
 # Non-CRIU stuff.
@@ -452,7 +437,7 @@ help:
 
 ruff:
 	@ruff --version
-	ruff check ${RUFF_FLAGS} --config=scripts/ruff.toml \
+	ruff ${RUFF_FLAGS} --config=scripts/ruff.toml \
 		test/zdtm.py \
 		test/inhfd/*.py \
 		test/others/rpc/config_file.py \
@@ -477,7 +462,7 @@ shellcheck:
 	shellcheck -x test/others/action-script/*.sh
 
 codespell:
-	codespell
+	codespell -S tags
 
 lint: ruff shellcheck codespell
 	# Do not append \n to pr_perror, pr_pwarn or fail
