@@ -180,7 +180,7 @@ int get_thread_ids(pid_t *thread_id, pid_t pid, size_t *entries, size_t max_size
 static int connect_page_data_server(){
 
 	printf("connect_page_data_server\n");
-	int sock = 0://, valread;
+	int sock = 0;//, valread;
 	struct sockaddr_in serv_addr;
 
 	// create socket

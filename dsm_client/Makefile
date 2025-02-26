@@ -11,8 +11,7 @@ clean:
 	rm -f parasite.po
 	rm -f parasite.o
 
-
-dsm_client: dsm_client.c parasite.h 
+dsm_client: dsm_client.c parasite.h
 	$(CC) $(CFLAGS) $(shell $(COMPEL) includes) -o $@ $<  parsemap.c $(shell $(COMPEL) --static libs) -lpthread
 
 parasite.h: parasite.po
@@ -23,3 +22,5 @@ parasite.po: parasite.o
 
 parasite.o: parasite.c
 	$(CC) $(CFLAGS) -c $(shell $(COMPEL) cflags) -o $@ $^
+
+.PHONY: all clean

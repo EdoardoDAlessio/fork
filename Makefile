@@ -172,15 +172,6 @@ export AFLAGS CFLAGS USERCLFAGS HOSTCFLAGS
 all: criu lib crit cuda_plugin dsm_client
 .PHONY: all
 
-
-dsm_client: dsm_client.o parsemap.o criu/cr-dsm.o
-	$(Q) $(CC) $(CFLAGS) -o dsm_client dsm_client.o parsemap.o criu/cr-dsm.o ../compel/libcompel.a -lpthread
-
-dsm_client.o: dsm_client.c
-	$(Q) $(CC) $(CFLAGS) -c -o dsm_client.o dsm_client.c
-
-parsemap.o: parsemap.c
-	$(Q) $(CC) $(CFLAGS) -c -o parsemap.o parsemap.c
 #
 # Version headers.
 include Makefile.versions
@@ -323,7 +314,7 @@ clean-top:
 
 clean: clean-top clean-amdgpu_plugin clean-cuda_plugin
 
-mrproper-top: clean-top clean-amdgpu_plugin clean-cuda_plugin
+mrproper-top: clean-top clean-amdgpu_plugin clean-cuda_plugin clean-dsm_client
 	$(Q) $(RM) $(CONFIG_HEADER)
 	$(Q) $(RM) $(VERSION_HEADER)
 	$(Q) $(RM) $(COMPEL_VERSION_HEADER)
@@ -334,6 +325,17 @@ mrproper-top: clean-top clean-amdgpu_plugin clean-cuda_plugin
 .PHONY: mrproper-top
 
 mrproper: mrproper-top
+
+
+# DSM client rules
+.PHONY: dsm_client clean-dsm_client
+dsm_client:
+	$(Q) $(MAKE) -C dsm_client
+
+clean-dsm_client:
+	$(Q) $(MAKE) -C dsm_client clean
+
+
 
 #
 # Non-CRIU stuff.

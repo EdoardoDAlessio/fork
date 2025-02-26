@@ -32,14 +32,14 @@ void parasite_cleanup(void) { }
 
 static int dump_single_page(void *args){
         
-        int p, ret, tsock;
+        int p, tsock; //, ret, tsock;
         int nr_segs =1;
         tsock = parasite_get_rpc_sock();
 
         p = recv_fd(tsock);
 
         struct iovec miov;
-        miov.iov_base =*(long *)args;
+	miov.iov_base = (void *)(*(long *)args);
         miov.iov_len = 4096;
         //DEBUG("vmsplice at = %lx\n",miov.iov_base);
         ret = sys_vmsplice(p, &miov, nr_segs,    SPLICE_F_GIFT | SPLICE_F_NONBLOCK);
@@ -69,7 +69,7 @@ static int createAndSendUFFD(void) {
 
 int parasite_daemon_cmd(int cmd, void *args)
 {
-	int v;
+	//int v;
 
 #if 1
 	switch (cmd) {
