@@ -203,7 +203,7 @@ static int connect_page_data_server(){
 		return -1;
 	}
 	return sock;
-}
+}x
 
 
 static int connect_server(){

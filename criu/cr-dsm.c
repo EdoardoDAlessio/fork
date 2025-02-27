@@ -144,6 +144,16 @@ int msg_counter = 0;
 
 int page_size = 4096;
 
+int accept_remote_uffd_socket(int);
+
+int addr_to_index(long long addr);
+int get_page_state(long addr){
+       return page_list_data[addr_to_index(addr)].state;
+}
+
+int get_page_owner(long addr){
+	return  page_list_data[addr_to_index(addr)].owner;
+}
 void print_page_status(long addr){
 	PS_PRINTF("[Page Status] 0x%lx ST=%s owner=%d shared_owners=%d\n",addr,
 			pg_status_str[get_page_state(addr)],get_page_owner(addr),
@@ -152,10 +162,6 @@ void print_page_status(long addr){
 
 int set_page_state(long addr, int state){
        page_list_data[addr_to_index(addr)].state = state;
-}
-
-int get_page_state(long addr){
-       return page_list_data[addr_to_index(addr)].state;
 }
 
 void set_page_owner(long addr, int owner){
@@ -174,9 +180,7 @@ int origin_has_shared_copy(long addr){
 
 }
 
-int get_page_owner(long addr){
-	return  page_list_data[addr_to_index(addr)].owner;
-}
+
 
 void send_page_invalidate_msg(long addr,int fd){
 	struct msg_info dsm_msg;
@@ -184,18 +188,18 @@ void send_page_invalidate_msg(long addr,int fd){
 	dsm_msg.msg_type = MSG_SEND_INVALIDATE;
 	dsm_msg.page_addr = addr;
 	dsm_msg.msg_id = msg_counter++;
-	FT_PRINTF("[FAULT] id=%d send_page_invalidate_msg :%lx \n",dsm_msg.msg_id,addr);
-
+	// // FT_PRINTF("[FAULT] id=%d send_page_invalidate_msg :%lx \n",dsm_msg.msg_id,addr);
+ 	printf("[FAULT] id=%ld send_page_invalidate_msg :%lx \n",dsm_msg.msg_id,addr);
 	write(fd,&dsm_msg,sizeof(struct msg_info));
 }
 
 void setup_connections(int *remote_uffd_server_fd,int *remote_msg_server_fd){
 
-	int new_socket, valread;
+	//int new_socket, valread;
 	struct sockaddr_in address;
 	int opt = 1;
-	int addrlen = sizeof(address);
-	char buffer[1024] = {0};
+	//int addrlen = sizeof(address);
+	//char buffer[1024] = {0};
 
 	// create server socket
 	if ((*remote_uffd_server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -286,7 +290,7 @@ int start_remote_msg_socket(){
 }
 #endif 
 
-int accept_remote_uffd_socket(server_fd){
+int accept_remote_uffd_socket(int server_fd){
 	
 	struct sockaddr_in address;
 	int addrlen = sizeof(address);
@@ -311,7 +315,7 @@ int accept_remote_uffd_socket(server_fd){
 	return new_socket;
 }
 
-int accept_remote_dsm_socket(server_fd){
+int accept_remote_dsm_socket(int server_fd){
 	
 	struct sockaddr_in address;
 	int addrlen = sizeof(address);
@@ -338,16 +342,21 @@ int accept_remote_dsm_socket(server_fd){
 
 static int uffd_int_get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long addr,unsigned char *page_content){
 
-        struct msg_info dsm_msg;
+    //struct msg_info dsm_msg;
 	int ack ;
 
 	int  page_owner_fd = 0,data_read=0;
 	read(pipe_fd_ack,&page_owner_fd,sizeof(int));
 	
-	FT_PRINTF("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
+	// FT_PRINTF("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
+	printf("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
+
         while(data_read < page_size){
                 int ret = read((int)page_owner_fd,page_content+data_read,page_size);
-                FT_PRINTF("[FAULT] page data ret=%d\n",ret);
+                // FT_PRINTF("[FAULT] page data ret=%d\n",ret);
+ 				printf("[FAULT] page data ret=%d\n",ret);
+
+                printf("[FAULT] page data ret=%d\n",ret);
 		if(ret == -1 || ret == 0)
 			exit(0);
                 data_read += ret;
@@ -361,24 +370,32 @@ static int uffd_int_get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long 
 
 
 static int get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long addr,unsigned char *page_content, bool is_write){
-
+		int ack;
+		int data_read = 0;
+		int  page_owner_fd = 0;
         struct msg_info dsm_msg;
-	FT_PRINTF("[FAULT] page data get_page_data_from_remote\n");
-	int ack ;
+		// FT_PRINTF("[FAULT] page data get_page_data_from_remote\n");
 
-	dsm_msg.msg_type = is_write ? MSG_GET_PAGE_DATA_INVALID :MSG_GET_PAGE_DATA;
+		printf("[FAULT] page data get_page_data_from_remote\n");
+
+
+		dsm_msg.msg_type = is_write ? MSG_GET_PAGE_DATA_INVALID :MSG_GET_PAGE_DATA;
         dsm_msg.page_addr = addr;
-	dsm_msg.msg_id = msg_counter++;
+		dsm_msg.msg_id = msg_counter++;
 
 	/*send message to page server*/
         write(pipe_fd, &dsm_msg, sizeof(struct msg_info));
-        int data_read = 0;
-	int  page_owner_fd = 0;
+
+
 	read(pipe_fd_ack,&page_owner_fd,sizeof(int));
-	FT_PRINTF("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
+	// FT_PRINTF("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
+
+	printf("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
         while(data_read < page_size){
                 int ret = read((int)page_owner_fd,page_content+data_read,page_size);
-                FT_PRINTF("[FAULT] page data ret=%d\n",ret);
+                // FT_PRINTF("[FAULT] page data ret=%d\n",ret);
+
+                printf("[FAULT] page data ret=%d\n",ret);
 		if(ret == -1)
 			exit(0);
 		if(ret == 2){ //BUG
@@ -398,9 +415,15 @@ volatile int invalidate_in_progress = 0;
 //uffd_handler
 static void *handler(void *arg)
 {
-
+	int pollres, readres, i;
+	long long addr;
+	unsigned char ack;
+	unsigned char page_content[4096] = {0};
+	struct uffdio_copy copy;
 	struct thread_param *p  = arg;
-	FT_PRINTF("handler uffd:%d\n",p->uffd);
+	// FT_PRINTF("handler uffd:%d\n",p->uffd);
+
+	printf("handler uffd:%d\n",p->uffd);
 
 	for (;;) {
 		struct uffd_msg msg;
@@ -410,9 +433,10 @@ static void *handler(void *arg)
 		pollfd[0].events = POLLIN;
 
 		// wait for a userfaultfd event to occur
-		int pollres = poll(pollfd, 1, 2000);
+		pollres = poll(pollfd, 1, 2000);
 
-		//FT_PRINTF("polling\n");
+		// FT_PRINTF("polling\n");
+		printf("polling\n");
 		switch (pollres) {
 			case -1:
 				perror("poll/userfaultfd");
@@ -434,7 +458,7 @@ static void *handler(void *arg)
 			continue;
 		}
 
-		int readres = read(p->uffd, &msg, sizeof(msg));
+		readres = read(p->uffd, &msg, sizeof(msg));
 		if (readres == -1) {
 			if (errno == EAGAIN)
 				continue;
@@ -447,9 +471,12 @@ static void *handler(void *arg)
 			exit(1);
 		}
 
-		FT_PRINTF("[FAULT] fault Start ###########\n");
+		// FT_PRINTF("[FAULT] fault Start ###########\n");
 
-		long long addr = msg.arg.pagefault.address;
+
+		printf("[FAULT] fault Start ###########\n");
+
+		addr = msg.arg.pagefault.address;
 
 		//pthread_mutex_lock(&page_list_data[addr_to_index(addr)].mutex);
 
@@ -459,26 +486,33 @@ static void *handler(void *arg)
 		uffd_info.interrputed = 0;
 		// handle the page fault by copying a page worth of bytes
 		if (msg.event & UFFD_EVENT_PAGEFAULT) {
-			struct msg_info dsm_msg;
+			//struct msg_info dsm_msg;
 
 			if(msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP)
 			{
 				invalidate_in_progress = 1;
-				FT_PRINTF("[FAULT] fault for write-protect 0x%llx\n",addr);
-				unsigned char ack = 0x10;
+				// FT_PRINTF("[FAULT] fault for write-protect 0x%llx\n",addr);
+
+				printf("[FAULT] fault for write-protect 0x%llx\n",addr);
+				ack = 0x10;
 
 				send_page_invalidate_msg(addr,p->pipe_fd);
 
 				read(p->pipe_fd_ack,&ack,1);
-				FT_PRINTF("ACK Recieved : %x\n",ack);
+				// FT_PRINTF("ACK Recieved : %x\n",ack);
+
+				printf("ACK Recieved : %x\n",ack);
 
 				if(ack == ACK_WRITE_PROTECT_EXPIRED)
 				{
 						
-					FT_PRINTF("UFFD interrupted\n");
-					unsigned char page_content[4096] = {0};
+					// FT_PRINTF("UFFD interrupted\n");
+
+						
+					printf("UFFD interrupted\n");
+					for( i = 0; i < 4096; i++)
+						page_content[i] = 0;
 					uffd_int_get_page_data_from_remote(p->pipe_fd, p->pipe_fd_ack,addr,page_content);
-					struct uffdio_copy copy;
 					copy.src = (long long)page_content;
 					copy.dst = (long long)addr;
 					copy.len = page_size;
@@ -497,13 +531,17 @@ static void *handler(void *arg)
 					if (ioctl(p->uffd, UFFDIO_WRITEPROTECT, &prms))
 						perror("write_protect #1\n");
 				}
-				FT_PRINTF("[FAULT] fault for write-protect done\n");
+				// FT_PRINTF("[FAULT] fault for write-protect done\n");
+
+				printf("[FAULT] fault for write-protect done\n");
 			}
 			else{
 				struct uffdio_copy copy;
 				bool is_write =  msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WRITE;
-				FT_PRINTF("[FAULT] fault for missing page %llx, write : %d\n",(long long)addr,is_write);
-				unsigned char page_content[4096] = {0};
+				// FT_PRINTF("[FAULT] fault for missing page %llx, write : %d\n",(long long)addr,is_write);
+				printf("[FAULT] fault for missing page %llx, write : %d\n",(long long)addr,is_write);
+				for( i = 0; i < 4096; i++)
+					page_content[i] = 0;
 				get_page_data_from_remote(p->pipe_fd, p->pipe_fd_ack,addr,page_content,is_write);
 				copy.src = (long long)page_content;
 				copy.dst = (long long)addr;
@@ -514,15 +552,21 @@ static void *handler(void *arg)
 					perror("ioctl/copy");
 					exit(1);
 				}
-                                FT_PRINTF("page write\n");
-                                        for(int i=0x0;i<0x30;i++)
-                                                FT_PRINTF("%03d ",page_content[i]);
-                                        FT_PRINTF("\n");
+                // FT_PRINTF("page write\n");
+				printf("page write\n");
+                for(int i=0x0;i<0x30;i++){
+					// FT_PRINTF("%03d ",page_content[i]);
+					printf("%03d ",page_content[i]);
+                }
+                // FT_PRINTF("\n");
+                printf("\n");
 			}
 		}
 		//pthread_mutex_unlock(&page_list_data[addr_to_index(addr)].mutex);
 		uffd_in_progress = 0;
-		FT_PRINTF("[FAULT] fault DONE ############ %lx \n");
+		// FT_PRINTF("[FAULT] fault DONE ############ %lx \n");
+
+		printf("[FAULT] fault DONE ############ \n");
 
 	}
 
@@ -550,7 +594,8 @@ int stealUFFD(int pid,struct pstree_item *item){
 		printf("Can't infect (pid: %d) with parasite\n", pid);
 	}
 
-	printf("g_parasite_ctl %lx\n",g_parasite_ctl);
+	//printf("g_parasite_ctl %lx\n",g_parasite_ctl);
+	printf("g_parasite_ctl %p\n", (void *)g_parasite_ctl);
 	if(compel_rpc_call(PARASITE_CMD_STEAL_UFFD, g_parasite_ctl) ||
 	   compel_util_recv_fd(g_parasite_ctl, &uffd) ||                                                                                                                       compel_rpc_sync(PARASITE_CMD_STEAL_UFFD, g_parasite_ctl))
 	{
