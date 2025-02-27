@@ -85,7 +85,8 @@ $(obj)/%: pie
 
 $(obj)/criu: $(PROGRAM-BUILTINS)
 	$(call msg-link, $@)
-	$(Q) $(CC) $(CFLAGS) $^ $(LDFLAGS) $(LIBS) $(WRAPFLAGS) $(GMONLDOPT) -rdynamic -o $@
+	$(call msg-link, $@)
+	$(Q) $(CC) $(CFLAGS) $^ $(LDFLAGS) $(LIBS) $(WRAPFLAGS) $(GMONLDOPT) -rdynamic -pthread -o $@
 
 UNIT-BUILTINS		+= $(obj)/util.o
 UNIT-BUILTINS		+= $(obj)/config.o

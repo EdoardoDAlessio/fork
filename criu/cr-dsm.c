@@ -17,6 +17,7 @@
 #include "parasite.h"
 #include "../compel/include/infect-priv.h"
 #include "dsm_log.h"
+#include "../compel/include/uapi/infect-util.h"
 
 #include "user.h"
 
@@ -145,8 +146,11 @@ int msg_counter = 0;
 int page_size = 4096;
 
 int accept_remote_uffd_socket(int);
-
+void change_to_wp(long addr,int uffd);
 int addr_to_index(long long addr);
+int check_pipe_file(void);
+void start_scp(void);
+
 int get_page_state(long addr){
        return page_list_data[addr_to_index(addr)].state;
 }
@@ -160,7 +164,7 @@ void print_page_status(long addr){
 			page_list_data[addr_to_index(addr)].shared_owners);
 }
 
-int set_page_state(long addr, int state){
+void set_page_state(long addr, int state){
        page_list_data[addr_to_index(addr)].state = state;
 }
 
@@ -183,14 +187,17 @@ int origin_has_shared_copy(long addr){
 
 
 void send_page_invalidate_msg(long addr,int fd){
+	int ret;
 	struct msg_info dsm_msg;
+
+	(void) ret;	//exclude warning on unused variable
 
 	dsm_msg.msg_type = MSG_SEND_INVALIDATE;
 	dsm_msg.page_addr = addr;
 	dsm_msg.msg_id = msg_counter++;
 	// // FT_PRINTF("[FAULT] id=%d send_page_invalidate_msg :%lx \n",dsm_msg.msg_id,addr);
  	printf("[FAULT] id=%ld send_page_invalidate_msg :%lx \n",dsm_msg.msg_id,addr);
-	write(fd,&dsm_msg,sizeof(struct msg_info));
+	ret = write(fd,&dsm_msg,sizeof(struct msg_info));
 }
 
 void setup_connections(int *remote_uffd_server_fd,int *remote_msg_server_fd){
@@ -242,7 +249,7 @@ void setup_connections(int *remote_uffd_server_fd,int *remote_msg_server_fd){
 	if (bind(*remote_msg_server_fd, (struct sockaddr *)&address, sizeof(address))<0) {
 		perror("bind failed");
 		exit(EXIT_FAILURE);
-	}	
+	}
 
 }
 
@@ -288,10 +295,10 @@ int start_remote_msg_socket(){
 
 	return new_socket;
 }
-#endif 
+#endif
 
 int accept_remote_uffd_socket(int server_fd){
-	
+
 	struct sockaddr_in address;
 	int addrlen = sizeof(address);
 	int new_socket;
@@ -316,7 +323,7 @@ int accept_remote_uffd_socket(int server_fd){
 }
 
 int accept_remote_dsm_socket(int server_fd){
-	
+
 	struct sockaddr_in address;
 	int addrlen = sizeof(address);
 	int new_socket;
@@ -343,16 +350,16 @@ int accept_remote_dsm_socket(int server_fd){
 static int uffd_int_get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long addr,unsigned char *page_content){
 
     //struct msg_info dsm_msg;
-	int ack ;
+	int ack, ret;
 
 	int  page_owner_fd = 0,data_read=0;
-	read(pipe_fd_ack,&page_owner_fd,sizeof(int));
-	
+	ret = read(pipe_fd_ack,&page_owner_fd,sizeof(int));
+
 	// FT_PRINTF("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
 	printf("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
 
         while(data_read < page_size){
-                int ret = read((int)page_owner_fd,page_content+data_read,page_size);
+                ret = read((int)page_owner_fd,page_content+data_read,page_size);
                 // FT_PRINTF("[FAULT] page data ret=%d\n",ret);
  				printf("[FAULT] page data ret=%d\n",ret);
 
@@ -361,7 +368,7 @@ static int uffd_int_get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long 
 			exit(0);
                 data_read += ret;
         }
-        write(pipe_fd, &ack, 1);
+        ret = write(pipe_fd, &ack, 1);
         return 0;
 }
 
@@ -370,7 +377,7 @@ static int uffd_int_get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long 
 
 
 static int get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long addr,unsigned char *page_content, bool is_write){
-		int ack;
+		int ack, ret;
 		int data_read = 0;
 		int  page_owner_fd = 0;
         struct msg_info dsm_msg;
@@ -384,15 +391,15 @@ static int get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long addr,unsi
 		dsm_msg.msg_id = msg_counter++;
 
 	/*send message to page server*/
-        write(pipe_fd, &dsm_msg, sizeof(struct msg_info));
+        ret = write(pipe_fd, &dsm_msg, sizeof(struct msg_info));
 
 
-	read(pipe_fd_ack,&page_owner_fd,sizeof(int));
+	ret = read(pipe_fd_ack,&page_owner_fd,sizeof(int));
 	// FT_PRINTF("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
 
 	printf("ACK Recieved. page_owner_fd %d\n",(int)page_owner_fd);
         while(data_read < page_size){
-                int ret = read((int)page_owner_fd,page_content+data_read,page_size);
+                ret = read((int)page_owner_fd,page_content+data_read,page_size);
                 // FT_PRINTF("[FAULT] page data ret=%d\n",ret);
 
                 printf("[FAULT] page data ret=%d\n",ret);
@@ -404,7 +411,7 @@ static int get_page_data_from_remote(int pipe_fd,int pipe_fd_ack, long addr,unsi
 		}
                 data_read += ret;
         }
-        write(pipe_fd, &ack, 1);
+        ret = write(pipe_fd, &ack, 1);
         return 0;
 }
 
@@ -498,17 +505,17 @@ static void *handler(void *arg)
 
 				send_page_invalidate_msg(addr,p->pipe_fd);
 
-				read(p->pipe_fd_ack,&ack,1);
+				i = read(p->pipe_fd_ack,&ack,1);
 				// FT_PRINTF("ACK Recieved : %x\n",ack);
 
 				printf("ACK Recieved : %x\n",ack);
 
 				if(ack == ACK_WRITE_PROTECT_EXPIRED)
 				{
-						
+
 					// FT_PRINTF("UFFD interrupted\n");
 
-						
+
 					printf("UFFD interrupted\n");
 					for( i = 0; i < 4096; i++)
 						page_content[i] = 0;
@@ -520,7 +527,7 @@ static void *handler(void *arg)
 					if (ioctl(p->uffd, UFFDIO_COPY, &copy) == -1) {
 						perror("ioctl/copy");
 						exit(1);
-					}	
+					}
 				}
 				else{
 
@@ -546,7 +553,7 @@ static void *handler(void *arg)
 				copy.src = (long long)page_content;
 				copy.dst = (long long)addr;
 				copy.len = page_size;
-				
+
 				copy.mode =  is_write ? 0: UFFDIO_COPY_MODE_WP;
 				if (ioctl(p->uffd, UFFDIO_COPY, &copy) == -1) {
 					perror("ioctl/copy");
@@ -617,8 +624,8 @@ int stealUFFD(int pid,struct pstree_item *item){
 
 /* Shared to Invalidate*/
 
-void handle_invalidate_page(struct msg_info *dsm_msg,int pid,struct pstree_item *item){
-	int val, ret,i;
+int handle_invalidate_page(struct msg_info *dsm_msg,int pid,struct pstree_item *item){
+	int val, ret; //,i;
 	long *args;
 	struct parasite_ctl *g_parasite_ctl;
 
@@ -645,10 +652,10 @@ void handle_invalidate_page(struct msg_info *dsm_msg,int pid,struct pstree_item 
 		pr_err("Can't cure (pid: %d) from parasite\n",pid);
 
 	printf("continue the mainthread\n");
-
+	return 0;
 }
 
-void special_page_data_request(int pid,int sk,long page_addr,struct pstree_item *item){
+int special_page_data_request(int pid,int sk,long page_addr,struct pstree_item *item){
 	int val, ret,i;
 	int p[2];
 	long *args;
@@ -662,13 +669,13 @@ void special_page_data_request(int pid,int sk,long page_addr,struct pstree_item 
 	g_parasite_ctl =  parasite_infect_seized(pid, item, g_vma_area_list);
 	args = compel_parasite_args(g_parasite_ctl, long);
 	*args = page_addr;
-	printf("%x\n",*args);
+	printf("%lx\n",*args);
 
 
 	ret = compel_rpc_call(PARASITE_CMD_DUMP_SINGLE, g_parasite_ctl);
 	if (ret < 0)
 		return -1;
-	pipe(p);
+	ret = pipe(p);
 	ret = compel_util_send_fd(g_parasite_ctl, p[1]);
 	if (ret)
 		return -1;
@@ -680,7 +687,7 @@ void special_page_data_request(int pid,int sk,long page_addr,struct pstree_item 
 	page_list_data[addr_to_index(page_addr)].state = PAGE_INVALID;
 
 	//Read from parsite pip
-	read(p[0], page_content,4096);
+	ret = read(p[0], page_content,4096);
 	for(i=0x26;i<0x30;i++){
 		printf("%03d ",page_content[i]);
 	}
@@ -705,9 +712,10 @@ void special_page_data_request(int pid,int sk,long page_addr,struct pstree_item 
 	printf("continue the mainthread\n");
 	close(p[0]);
 	close(p[1]);
+	return 0;
 }
 /* Modified to Shared */
-void handle_page_data_request(int pid,int sk,struct msg_info *dsm_msg,struct pstree_item *item){
+int handle_page_data_request(int pid,int sk,struct msg_info *dsm_msg,struct pstree_item *item){
 	int val, ret,i;
 	int p[2];
 	long *args;
@@ -721,13 +729,13 @@ void handle_page_data_request(int pid,int sk,struct msg_info *dsm_msg,struct pst
 	g_parasite_ctl =  parasite_infect_seized(pid, item, g_vma_area_list);
 	args = compel_parasite_args(g_parasite_ctl, long);
 	*args = dsm_msg->page_addr;
-	printf("%x\n",*args);
+	printf("%lx\n",*args);
 
 
 	ret = compel_rpc_call(PARASITE_CMD_DUMP_SINGLE, g_parasite_ctl);
 	if (ret < 0)
 		return -1;
-	pipe(p);
+	ret = pipe(p);
 	ret = compel_util_send_fd(g_parasite_ctl, p[1]);
 	if (ret)
 		return -1;
@@ -738,7 +746,7 @@ void handle_page_data_request(int pid,int sk,struct msg_info *dsm_msg,struct pst
 		return -1;
 
 	//Read from parsite pip
-	read(p[0], page_content,4096);
+	ret = read(p[0], page_content,4096);
 	for(i=0x00;i<0x30;i++){
 		printf("%03d ",page_content[i]);
 	}
@@ -770,10 +778,11 @@ void handle_page_data_request(int pid,int sk,struct msg_info *dsm_msg,struct pst
 	printf("continue the mainthread\n");
 	close(p[0]);
 	close(p[1]);
+	return 0;
 }
 
 void register_and_write_protect(int uffd,int pid){
-
+	struct uffdio_register uffdio_register;
 	struct uffdio_writeprotect uf_wp;
 	struct uffdio_api uffdio_api;
 	// enable for api version and check features
@@ -789,7 +798,7 @@ void register_and_write_protect(int uffd,int pid){
 		exit(1);
 	}
 
-	struct uffdio_register uffdio_register;
+
 
 	for(int i=0;i<total_pages;i++){
 		uffdio_register.range.start = page_list_data[i].saddr ;
@@ -798,7 +807,7 @@ void register_and_write_protect(int uffd,int pid){
 
 		if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register) == -1) {
 			perror("ioctl/uffdio_register\n"  );
-			printf("ioctl/uffdio_register :%llx\n",  page_list_data[i].saddr  );
+			printf("ioctl/uffdio_register :%lx\n",  page_list_data[i].saddr  );
 			continue;
 		}
 
@@ -809,7 +818,7 @@ void register_and_write_protect(int uffd,int pid){
 		if (ioctl(uffd, UFFDIO_WRITEPROTECT, &uf_wp))
 		{
 			perror("write_protect\n");
-			printf("page : %llx\n",page_list_data[i].saddr);
+			printf("page : %lx\n",page_list_data[i].saddr);
 		}
 		page_list_data[i].state = PAGE_SHARED;
 	}
@@ -826,7 +835,8 @@ void change_to_wp(long addr,int uffd){
 	if (ioctl(uffd, UFFDIO_WRITEPROTECT, &uf_wp))
 	{
 		perror("write_protect\n");
-		printf("page : %llx\n",addr);
+		printf("page : %llx\n",(long long unsigned ) addr);
+		//printf("page : %lx\n",addr);
 	}
 	printf("change_to_wp %lx \n",addr);
 
@@ -847,12 +857,11 @@ void create_page_list(struct pstree_item *item)
                         continue;
                 }
 
-                printf("maps_tmp->addr_start %lx maps_tmp->addr_length %d (%d pages)\n",maps_tmp->addr_start,
-				maps_tmp->length, maps_tmp->length/4096);
+                printf("maps_tmp->addr_start %lx maps_tmp->addr_length %ld (%ld pages)\n", (long unsigned ) maps_tmp->addr_start, maps_tmp->length, maps_tmp->length/4096);
                 printf("................................\n");
 		for(int i=0; i < (maps_tmp->length/4096); i++)
 		{
-			page_list_data[i+index].saddr = maps_tmp->addr_start + i*4096;
+			page_list_data[i+index].saddr = (long) (maps_tmp->addr_start + i * 4096);
 			page_list_data[i+index].owner = 0;
 			page_list_data[i+index].state = PAGE_SHARED;
 		}
@@ -877,8 +886,8 @@ int addr_to_index(long long addr){
 
 	for(int i=0;i<total_pages;i++)
 	{
-		printf("FATAL: Page not found =%d %llx %llx\n",i,addr,page_list_data[i].saddr);
-		
+		printf("FATAL: Page not found =%d %llx %lx\n",i,addr,page_list_data[i].saddr);
+
 	}
 	exit(0);
 }
@@ -910,25 +919,26 @@ void grab_and_forward_page(int *r_usock, int *r_msock,int page_owner,int remote_
 
 
 int broadcast_invalidate_page(long page_addr , int remote_id,int *r_msock ,int  n_remote_threads){
-	
 
-	struct msg_info dsm_msg;
-	printf("broadcast_invalidate_page\n");
 	unsigned char ack;
+	struct msg_info dsm_msg;
+	int remote_owner_id= page_list_data[addr_to_index(page_addr)].owner, ret=0;
+
+	printf("broadcast_invalidate_page\n");
 
 	dsm_msg.msg_type = MSG_INVALIDATE_PAGE;
         dsm_msg.page_addr = page_addr;
 
-	int remote_owner_id= page_list_data[addr_to_index(page_addr)].owner;
 	if(remote_owner_id == remote_id)
-		return 0;
+		return ret;
 
 	printf("broadcast_invalidate_page cur_own:%d 0x%lx\n",remote_owner_id,page_addr);
-	write(r_msock[remote_owner_id], &dsm_msg,sizeof(struct msg_info));
-	read(r_msock[remote_owner_id],&ack,1);
+	ret = write(r_msock[remote_owner_id], &dsm_msg,sizeof(struct msg_info));
+	ret = read(r_msock[remote_owner_id],&ack,1);
 	printf("broadcast recieved ACK\n");
-	
-	
+
+	return 0;
+
 //	for(int i=1;i<=n_remote_threads;i++)
 //	{
 //		if(remote_id != i){
@@ -942,14 +952,16 @@ int broadcast_invalidate_page(long page_addr , int remote_id,int *r_msock ,int  
 
 
 void broadcast_uffd_get_page_invalidate(long addr ,int *r_msock){
-
+	int ret;
 	unsigned char ack;
 	struct msg_info dsm_msg;
+
+	(void) ret;
 
 	dsm_msg.page_addr = addr;
 	dsm_msg.msg_type = MSG_INVALIDATE_PAGE;
 	dsm_msg.msg_id = msg_counter++;
-	
+
 
 	if( get_page_state(addr) == PAGE_SHARED){
 		int shared_owner = page_list_data[addr_to_index(addr)].shared_owners;
@@ -958,33 +970,34 @@ void broadcast_uffd_get_page_invalidate(long addr ,int *r_msock){
 		for(int i=1;i<=MAX_THREADS;i++)
 		{
 			if(shared_owner  &  1<<i) {
-				printf("broadcast shared_page_owner=%d %d\n",i,dsm_msg.msg_id);
-				send(r_msock[i],&dsm_msg,sizeof(dsm_msg),0);
-				read(r_msock[i],&ack,1);
+				printf("broadcast shared_page_owner=%d %ld\n",i,dsm_msg.msg_id);
+				ret = send(r_msock[i],&dsm_msg,sizeof(dsm_msg),0);
+				ret = read(r_msock[i],&ack,1);
 				printf("broadcast done \n");
 			}
 		}
 	}
 	else{ //PAGE_MODIFIED  ; only 1 owner;
 		int page_owner = get_page_owner(addr);
-		printf("broadcast single_page_owner=%d %d\n",page_owner,dsm_msg.msg_id);
-		send(r_msock[page_owner],&dsm_msg,sizeof(dsm_msg),0);
-		read(r_msock[page_owner],&ack,1);
+		printf("broadcast single_page_owner=%d %ld\n",page_owner,dsm_msg.msg_id);
+		ret = send(r_msock[page_owner],&dsm_msg,sizeof(dsm_msg),0);
+		ret = read(r_msock[page_owner],&ack,1);
 		printf("broadcast done \n");
 	}
 
-	
+
 
 }
 
 void start_scp(){
-
+	int fd, ret;
 	char msg[] = "START";
 	check_pipe_file();
-	
-	int fd = open("/tmp/pipe_scp", O_WRONLY);
-        write(fd, msg, strlen(msg)+1);
+
+		fd = open("/tmp/pipe_scp", O_WRONLY);
+        ret = write(fd, msg, strlen(msg)+1);
         close(fd);
+	fd = ret;//avoid unused warning
 }
 
 
@@ -1000,9 +1013,32 @@ void start_dsm_server(struct pstree_item *item)
 	int *r_usock,*r_msock;
 	int n_remote_threads;
 
+	int remote_uffd_server_fd,remote_msg_server_fd;
+	int msg_served;
+	int no_of_fds;
+	int last_process_uffd_fd = 0;
+	int pollres, read_fd;
+	struct msg_info dsm_msg;
+	int readres, page_owner, page_owner_fd, shared_owner, shared_owners, pid, remote_id;
+	unsigned char ack;
+	struct pollfd  *fds;
+
+	(void)nr_pages;
+	(void)wait_status;
+	(void)pollres;
+	(void)remote_id;
+	(void)msg_served;
+	(void)last_process_uffd_fd;
+	(void)shared_owners;
+	(void)no_of_fds;
+	(void)fds;
+	(void)val;
+	(void)vma_count;
+	(void)vma_area;
+
 	main_pid = item->threads[0].real;
-	
-	start_scp();	
+
+	start_scp();
 
 	uffd = stealUFFD(main_pid,item);
 
@@ -1012,14 +1048,14 @@ void start_dsm_server(struct pstree_item *item)
 	for(i=0;i<item->nr_threads;i++)
 		pr_info("pid-%d : %d\n",i,item->threads[i].real);
 
-	pipe(p);
-	pipe(p_ack);
+	i = pipe(p);
+	i = pipe(p_ack);
 
 	n_remote_threads = item->nr_threads-1;
-	r_usock = (int *)malloc(sizeof(int)* (n_remote_threads+1)); 
-	r_msock = (int *)malloc(sizeof(int)* (n_remote_threads+1)); 
+	r_usock = (int *)malloc(sizeof(int)* (n_remote_threads+1));
+	r_msock = (int *)malloc(sizeof(int)* (n_remote_threads+1));
 
-	int remote_uffd_server_fd,remote_msg_server_fd;
+
 	setup_connections(&remote_uffd_server_fd, &remote_msg_server_fd);
 
 
@@ -1037,43 +1073,45 @@ void start_dsm_server(struct pstree_item *item)
 	param.uffd = uffd;
 	param.pipe_fd = p[1]; // writer
 	param.pipe_fd_ack = p_ack[0];
-	int msg_served = -1;
+	msg_served = -1;
 
-	int pid = item->threads[0].real;
+	pid = item->threads[0].real;
 	register_and_write_protect(uffd,item->threads[0].real);
 	printf("# uffd : %d\n",param.uffd);
 	pthread_create(&uffd_thread, NULL, handler, (void *)&param);
 
-	int no_of_fds = n_remote_threads + 1;
-	int last_process_uffd_fd = 0;
+	no_of_fds = n_remote_threads + 1;
+	last_process_uffd_fd = 0;
 	printf("# n_remote_threads : %d\n",n_remote_threads);
 	printf("# no_of_fds : %d\n",no_of_fds);
 
-	struct pollfd  *fds= (struct pollfd *)malloc(sizeof(struct pollfd) * no_of_fds);
+	fds= (struct pollfd *)malloc(sizeof(struct pollfd) * no_of_fds);
 	for(;;){
 		val = ptrace(PTRACE_CONT,item->threads[0].real, NULL, NULL);
 	//	pr_info("PTRACE_CONT %d\n",val);
 
-		
+
 		fds[0].fd = p[0];
 		fds[0].events = POLLIN;
-	
+
 		for(int i=1;i<no_of_fds;i++){
 				// remote uffd layer socket
 				fds[i].fd = r_usock[i];    //1->1, 3->2
 				fds[i].events = POLLIN;
 		}
 
-		int pollres = poll(fds, no_of_fds, 20000);
-		int read_fd = -1;
+
+		pollres = poll(fds, no_of_fds, 20000);
+		read_fd = -1;
 		last_process_uffd_fd = 0;
 		if(fds[0].revents & POLLIN & !last_process_uffd_fd){
 			last_process_uffd_fd = 1;
-			struct msg_info dsm_msg;
-			printf("MSG FROM own uffd thread msg_id=%d\n",dsm_msg.msg_id);
+
+
+			printf("MSG FROM own uffd thread msg_id=%ld\n",dsm_msg.msg_id);
 			read_fd = p[0];
-			int readres = read(read_fd, &dsm_msg, sizeof(dsm_msg));
-			
+			readres = read(read_fd, &dsm_msg, sizeof(dsm_msg));
+
 			if (readres == -1) {
 				if (errno == EAGAIN)
 					continue;
@@ -1085,51 +1123,52 @@ void start_dsm_server(struct pstree_item *item)
 				fprintf(stderr, "invalid msg size--- \n");
 				exit(1);
 			}
-			unsigned char ack = 0x10;
-			int page_owner=0,page_owner_fd;
+
+			ack = 0x10;
+			page_owner=0;
 			switch(dsm_msg.msg_type){
 #if 1
 				case MSG_SEND_INVALIDATE:
-					printf("uffd MSG_SEND_INVALIDATE 0x%x\n",dsm_msg.page_addr);
+					printf("uffd MSG_SEND_INVALIDATE 0x%lx\n",dsm_msg.page_addr);
 					dsm_msg.msg_type = MSG_INVALIDATE_PAGE;
 					page_owner = get_page_owner(dsm_msg.page_addr);
-					int shared_owner = page_list_data[addr_to_index(dsm_msg.page_addr)].shared_owners;
+					shared_owner = page_list_data[addr_to_index(dsm_msg.page_addr)].shared_owners;
 
 					if(get_page_state(dsm_msg.page_addr) == PAGE_MODIFIED)
 					{
 						printf("some other thread %d invalidated the page, need new page\n",page_owner);
 						// uffd_int_get_page_data_from_remote
 						ack = ACK_WRITE_PROTECT_EXPIRED;
-						write(p_ack[1],&ack,1); //ACK to UFFD thread
-						
-						dsm_msg.msg_type = MSG_GET_PAGE_DATA_INVALID;
-						send(r_msock[page_owner],&dsm_msg,sizeof(dsm_msg),0);
-	
+						i = write(p_ack[1],&ack,1); //ACK to UFFD thread
 
-						page_owner_fd = r_msock[page_owner];	
+						dsm_msg.msg_type = MSG_GET_PAGE_DATA_INVALID;
+						i = send(r_msock[page_owner],&dsm_msg,sizeof(dsm_msg),0);
+
+
+						page_owner_fd = r_msock[page_owner];
 						printf("sending page_owner_fd = %d\n",page_owner_fd);
-						write(p_ack[1],&page_owner_fd,sizeof(int));
+						i = write(p_ack[1],&page_owner_fd,sizeof(int));
 						printf("final ack\n");
-						read(p[0],&ack,1);
+						i = read(p[0],&ack,1);
 						printf("final ack done\n");
-				
+
 						set_page_owner(dsm_msg.page_addr,0);
 						set_page_sh_owners(dsm_msg.page_addr,0);
 						print_page_status(dsm_msg.page_addr);
-						break;		
+						break;
 					}
 					/*WP fault, broadcast invalidation to all shared owners*/
 					for(int i=1;i<=MAX_THREADS;i++)
 					{
 						if(shared_owner  &  1<<i) {
 							printf("broadcast shared_page_owner=%d\n",i);
-							send(r_msock[i],&dsm_msg,sizeof(dsm_msg),0);
-							read(r_msock[i],&ack,1);
+							i = send(r_msock[i],&dsm_msg,sizeof(dsm_msg),0);
+							i = read(r_msock[i],&ack,1);
 							printf("broadcast done \n");
 						}
 					}
 
-					write(p_ack[1],&ack,1); //ACK to UFFD thread
+					i = write(p_ack[1],&ack,1); //ACK to UFFD thread
 
 					set_page_state(dsm_msg.page_addr,PAGE_MODIFIED);
 					set_page_owner(dsm_msg.page_addr,0);
@@ -1143,31 +1182,31 @@ void start_dsm_server(struct pstree_item *item)
 
 				case MSG_GET_PAGE_DATA_INVALID:
 				case MSG_GET_PAGE_DATA:
-					page_owner = get_page_owner(dsm_msg.page_addr); 
+					page_owner = get_page_owner(dsm_msg.page_addr);
 					printf("uffd %s 0x%lx  owner: %d\n",msg_str[dsm_msg.msg_type] ,dsm_msg.page_addr,page_owner);
-					send(r_msock[page_owner],&dsm_msg,sizeof(dsm_msg),0);
-					
-					page_owner_fd = r_msock[page_owner];	
+					i = send(r_msock[page_owner],&dsm_msg,sizeof(dsm_msg),0);
+
+					page_owner_fd = r_msock[page_owner];
 					printf("sending page_owner_fd = %d\n",page_owner_fd);
-					write(p_ack[1],&page_owner_fd,sizeof(int));
+					i = write(p_ack[1],&page_owner_fd,sizeof(int));
 
 					printf("final ack\n");
-					read(p[0],&ack,1);
+					i = read(p[0],&ack,1);
 					printf("final ack done\n");
-					
+
 					if(dsm_msg.msg_type == MSG_GET_PAGE_DATA)
 					{
 						set_page_state( dsm_msg.page_addr,PAGE_SHARED) ;
-						page_list_data[addr_to_index(dsm_msg.page_addr)].shared_owners |= ( (1<<0) | 1<<page_owner) ;	
+						page_list_data[addr_to_index(dsm_msg.page_addr)].shared_owners |= ( (1<<0) | 1<<page_owner) ;
 					}
 					else{
 						broadcast_uffd_get_page_invalidate(dsm_msg.page_addr,r_msock);
 						set_page_state(dsm_msg.page_addr,PAGE_MODIFIED);
-					        set_page_owner(dsm_msg.page_addr,0);
+					    set_page_owner(dsm_msg.page_addr,0);
 						set_page_sh_owners(dsm_msg.page_addr,0);
 					}
 					print_page_status(dsm_msg.page_addr);
-					
+
 					break;
 #endif
 			}
@@ -1177,14 +1216,14 @@ void start_dsm_server(struct pstree_item *item)
 		/***********  REMOTE MSGS ********************/
 //		else if(fds[1].revents & POLLIN)
 			read_fd=-1;
-			int remote_id=-1;
-			last_process_uffd_fd =0;	
+			remote_id=-1;
+			last_process_uffd_fd =0;
 #if 1
 			for(int i=1; i<=no_of_fds; i++)
-			{		
+			{
 				if(fds[i].revents & POLLIN){ //   1,3,4
 					read_fd = r_usock[i];
-				        remote_id = i;	
+				        remote_id = i;
 					printf("fd with new msg\n");
 					break;
 				}
@@ -1200,12 +1239,12 @@ void start_dsm_server(struct pstree_item *item)
 				continue;
 			}
 #endif
-			struct msg_info dsm_msg;
-			unsigned char ack = 0x10;
-			int page_owner=0,page_owner_fd;
-			printf("MSG FROM remote thread=%d msg_id=%d\n",remote_id,dsm_msg.msg_id);
 
-			int readres = read(read_fd, &dsm_msg, sizeof(dsm_msg));
+			ack = 0x10;
+			page_owner=0;
+			printf("MSG FROM remote thread=%d msg_id=%ld\n",remote_id,dsm_msg.msg_id);
+
+			readres = read(read_fd, &dsm_msg, sizeof(dsm_msg));
 			if (readres == -1) {
 				if (errno == EAGAIN)
 					continue;
@@ -1221,15 +1260,15 @@ void start_dsm_server(struct pstree_item *item)
 			switch(dsm_msg.msg_type){
 				case MSG_INVALIDATE_PAGE:
 					printf("REMOTE %s remote_id=%d %lx\n",msg_str[dsm_msg.msg_type],remote_id,dsm_msg.page_addr);
-					int shared_owners = get_page_sh_owners(dsm_msg.page_addr);
-					int page_owner = get_page_owner(dsm_msg.page_addr);
+					shared_owners = get_page_sh_owners(dsm_msg.page_addr);
+					page_owner = get_page_owner(dsm_msg.page_addr);
 #if 1
 
 					if(get_page_state(dsm_msg.page_addr) == PAGE_MODIFIED)
 					{
 						printf("========> Page is not shared cur_own=%d\n",get_page_owner(dsm_msg.page_addr));
 						ack = 0x89;
-						send(r_usock[remote_id],&ack,1,0);
+						i = send(r_usock[remote_id],&ack,1,0);
 						if(page_owner ==0)
 							special_page_data_request(item->threads[0].real,r_usock[remote_id],dsm_msg.page_addr,item);
 						else{
@@ -1238,22 +1277,22 @@ void start_dsm_server(struct pstree_item *item)
 						set_page_state(dsm_msg.page_addr,PAGE_MODIFIED);
 						set_page_owner(dsm_msg.page_addr,remote_id);
 						set_page_sh_owners(dsm_msg.page_addr,0);
-						
+
 						print_page_status(dsm_msg.page_addr);
 						break;
 					}
 #endif
-					// Invalidation to Shared owners	
+					// Invalidation to Shared owners
 					if(origin_has_shared_copy(dsm_msg.page_addr)){
 						printf("origin has shared copy\n");
 						handle_invalidate_page(&dsm_msg, pid ,item);
-					}	
+					}
 					for(int i=1;i<=MAX_THREADS;i++)
 					{
 						if(shared_owners  &  1<<i && i != remote_id) {
 							printf("broadcast shared_page_owner=%d\n",i);
-							send(r_msock[i],&dsm_msg,sizeof(dsm_msg),0);
-							read(r_msock[i],&ack,1);
+							i = send(r_msock[i],&dsm_msg,sizeof(dsm_msg),0);
+							i = read(r_msock[i],&ack,1);
 							printf("broadcast done \n");
 						}
 					}
@@ -1273,15 +1312,15 @@ void start_dsm_server(struct pstree_item *item)
 					printf(" REMOTE %s remote_id=%d addr=%lx cur_own=%d \n",msg_str[dsm_msg.msg_type],remote_id, dsm_msg.page_addr,
 										page_owner);
 					if(page_list_data[addr_to_index(dsm_msg.page_addr)].owner != 0)
-		
-					{ 
+
+					{
 						printf("<<<<<<<<<Remote thread owns data>>>>>>>>\n");
 						assert(remote_id != page_owner);
-		
+
 						grab_and_forward_page(r_usock,r_msock,page_owner,remote_id,dsm_msg.page_addr,dsm_msg.msg_type);
 					}else
 						handle_page_data_request(item->threads[0].real,r_usock[remote_id],&dsm_msg,item);
-					
+
 					if(dsm_msg.msg_type == MSG_GET_PAGE_DATA) //shared
 					{
 						set_page_state(dsm_msg.page_addr,PAGE_SHARED);
@@ -1316,25 +1355,32 @@ int check_pipe_file(){
 
 
 procmaps_iterator* pmparser_parse(int pid){
+	unsigned long l_addr_start;
 	procmaps_iterator* maps_it = malloc(sizeof(procmaps_iterator));
 	char maps_path[500];
-	if(pid>=0 ){
-		sprintf(maps_path,"/proc/%d/maps",pid);
-	}else{
-		sprintf(maps_path,"/proc/self/maps");
-	}
-	printf("path : %s\n",maps_path);
-	FILE* file=fopen(maps_path,"r");
-	if(!file){
-		fprintf(stderr,"pmparser : cannot open the memory maps, %s\n",strerror(errno));
-		return NULL;
-	}
+	FILE* file;
 	int ind=0;char buf[PROCMAPS_LINE_MAX_LENGTH];
 	int c;
 	procmaps_struct* list_maps=NULL;
 	procmaps_struct* tmp;
 	procmaps_struct* current_node=list_maps;
 	char addr1[20],addr2[20], perm[8], offset[20], dev[10],inode[30],pathname[PATH_MAX];
+	(void) c;
+	(void) l_addr_start;
+
+	if(pid>=0 ){
+		sprintf(maps_path,"/proc/%d/maps",pid);
+	}else{
+		sprintf(maps_path,"/proc/self/maps");
+	}
+	printf("path : %s\n",maps_path);
+	file=fopen(maps_path,"r");
+	if(!file){
+		fprintf(stderr,"pmparser : cannot open the memory maps, %s\n",strerror(errno));
+		return NULL;
+	}
+
+
 	while( !feof(file) ){
 		if (fgets(buf,PROCMAPS_LINE_MAX_LENGTH,file) == NULL){
 			fprintf(stderr,"pmparser : fgets failed, %s\n",strerror(errno));
@@ -1344,7 +1390,7 @@ procmaps_iterator* pmparser_parse(int pid){
 		tmp=(procmaps_struct*)malloc(sizeof(procmaps_struct));
 		//fill the node
 		_pmparser_split_line(buf,addr1,addr2,perm,offset, dev,inode,pathname);
-		unsigned long l_addr_start;
+
 		sscanf(addr1,"%lx",(long unsigned *)&tmp->addr_start );
 		sscanf(addr2,"%lx",(long unsigned *)&tmp->addr_end );
 		//size
@@ -1365,13 +1411,13 @@ procmaps_iterator* pmparser_parse(int pid){
 		//pathname
 		strcpy(tmp->pathname,pathname);
 		tmp->track_uffd=0;
-		printf("pathname -> %s start 0x%llx to 0x%llx %d pages",pathname,tmp->addr_start, tmp->addr_end, tmp->length/4096);
+		printf("pathname -> %s start 0x%llx to 0x%llx %ld pages",pathname,(long long unsigned) tmp->addr_start, (long long unsigned) tmp->addr_end, tmp->length/4096);
 		if(strlen(pathname) == 0 && tmp->is_r && tmp->is_w)
 		{
 			printf("[TRACK]\n");
 			tmp->track_uffd=1;
 		}
-		else 
+		else
 			printf("\n");
 		tmp->next=NULL;
 		//attach the node
@@ -1398,9 +1444,10 @@ procmaps_iterator* pmparser_parse(int pid){
 
 
 procmaps_struct* pmparser_next(procmaps_iterator* p_procmaps_it){
+	procmaps_struct* p_current;
 	if(p_procmaps_it->current == NULL)
 		return NULL;
-	procmaps_struct* p_current = p_procmaps_it->current;
+	p_current = p_procmaps_it->current;
 	p_procmaps_it->current = p_procmaps_it->current->next;
 	return p_current;
 	/*
@@ -1417,9 +1464,10 @@ procmaps_struct* pmparser_next(procmaps_iterator* p_procmaps_it){
 
 void pmparser_free(procmaps_iterator* p_procmaps_it){
 	procmaps_struct* maps_list = p_procmaps_it->head;
-	if(maps_list==NULL) return ;
 	procmaps_struct* act=maps_list;
-	procmaps_struct* nxt=act->next;
+	procmaps_struct* nxt;
+	if(maps_list==NULL) return ;
+	nxt=act->next;
 	while(act!=NULL){
 		free(act);
 		act=nxt;

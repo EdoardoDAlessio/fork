@@ -65,121 +65,6 @@ typedef struct procmaps_iterator{
 } procmaps_iterator;
 
 
-procmaps_iterator* pmparser_parse(int pid){
-	procmaps_iterator* maps_it = malloc(sizeof(procmaps_iterator));
-	char maps_path[500];
-	if(pid>=0 ){
-		sprintf(maps_path,"/proc/%d/maps",pid);
-	}else{
-		sprintf(maps_path,"/proc/self/maps");
-	}
-	printf("path : %s\n",maps_path);
-	FILE* file=fopen(maps_path,"r");
-	if(!file){
-		fprintf(stderr,"pmparser : cannot open the memory maps, %s\n",strerror(errno));
-		return NULL;
-	}
-	int ind=0;char buf[PROCMAPS_LINE_MAX_LENGTH];
-	int c;
-	procmaps_struct* list_maps=NULL;
-	procmaps_struct* tmp;
-	procmaps_struct* current_node=list_maps;
-	char addr1[20],addr2[20], perm[8], offset[20], dev[10],inode[30],pathname[PATH_MAX];
-	while( !feof(file) ){
-		if (fgets(buf,PROCMAPS_LINE_MAX_LENGTH,file) == NULL){
-			fprintf(stderr,"pmparser : fgets failed, %s\n",strerror(errno));
-	//		return NULL;
-		}
-		//allocate a node
-		tmp=(procmaps_struct*)malloc(sizeof(procmaps_struct));
-		//fill the node
-		_pmparser_split_line(buf,addr1,addr2,perm,offset, dev,inode,pathname);
-		//printf("#%s",buf);
-		//printf("%s-%s %s %s %s %s\t%s\n",addr1,addr2,perm,offset,dev,inode,pathname);
-		//addr_start & addr_end
-		unsigned long l_addr_start;
-		sscanf(addr1,"%lx",(long unsigned *)&tmp->addr_start );
-		sscanf(addr2,"%lx",(long unsigned *)&tmp->addr_end );
-		//size
-		tmp->length=(unsigned long)(tmp->addr_end-tmp->addr_start);
-		//perm
-		strcpy(tmp->perm,perm);
-		tmp->is_r=(perm[0]=='r');
-		tmp->is_w=(perm[1]=='w');
-		tmp->is_x=(perm[2]=='x');
-		tmp->is_p=(perm[3]=='p');
-
-		//offset
-		sscanf(offset,"%lx",&tmp->offset );
-		//device
-		strcpy(tmp->dev,dev);
-		//inode
-		tmp->inode=atoi(inode);
-		//pathname
-		strcpy(tmp->pathname,pathname);
-		printf("pathname -> %s start 0x%llx\n",pathname,tmp->addr_start);
-		if(strlen(pathname) == 0 && tmp->is_r && tmp->is_w)
-		{
-			printf("add to list\n");
-			tmp->track_uffd=1;	
-		}
-		tmp->next=NULL;
-		//attach the node
-		if(ind==0){
-			list_maps=tmp;
-			list_maps->next=NULL;
-			current_node=list_maps;
-		}
-		current_node->next=tmp;
-		current_node=tmp;
-		ind++;
-		//printf("%s",buf);
-	}
-
-	//close file
-	fclose(file);
-
-
-	//g_last_head=list_maps;
-	maps_it->head = list_maps;
-	maps_it->current =  list_maps;
-	return maps_it;
-}
-
-
-procmaps_struct* pmparser_next(procmaps_iterator* p_procmaps_it){
-	if(p_procmaps_it->current == NULL)
-		return NULL;
-	procmaps_struct* p_current = p_procmaps_it->current;
-	p_procmaps_it->current = p_procmaps_it->current->next;
-	return p_current;
-	/*
-	if(g_current==NULL){
-		g_current=g_last_head;
-	}else
-		g_current=g_current->next;
-
-	return g_current;
-	*/
-}
-
-
-
-void pmparser_free(procmaps_iterator* p_procmaps_it){
-	procmaps_struct* maps_list = p_procmaps_it->head;
-	if(maps_list==NULL) return ;
-	procmaps_struct* act=maps_list;
-	procmaps_struct* nxt=act->next;
-	while(act!=NULL){
-		free(act);
-		act=nxt;
-		if(nxt!=NULL)
-			nxt=nxt->next;
-	}
-	free(p_procmaps_it);
-}
-
-
 void _pmparser_split_line(
 		char*buf,char*addr1,char*addr2,
 		char*perm,char* offset,char* device,char*inode,
@@ -250,6 +135,124 @@ void _pmparser_split_line(
 	pathname[i-orig]='\0';
 
 }
+
+procmaps_iterator* pmparser_parse(int pid){
+	procmaps_iterator* maps_it = malloc(sizeof(procmaps_iterator));
+	char maps_path[500];
+	if(pid>=0 ){
+		sprintf(maps_path,"/proc/%d/maps",pid);
+	}else{
+		sprintf(maps_path,"/proc/self/maps");
+	}
+	printf("path : %s\n",maps_path);
+	FILE* file=fopen(maps_path,"r");
+	if(!file){
+		fprintf(stderr,"pmparser : cannot open the memory maps, %s\n",strerror(errno));
+		return NULL;
+	}
+	int ind=0;char buf[PROCMAPS_LINE_MAX_LENGTH];
+	int c;
+	(void)c;
+	procmaps_struct* list_maps=NULL;
+	procmaps_struct* tmp;
+	procmaps_struct* current_node=list_maps;
+	char addr1[20],addr2[20], perm[8], offset[20], dev[10],inode[30],pathname[PATH_MAX];
+	while( !feof(file) ){
+		if (fgets(buf,PROCMAPS_LINE_MAX_LENGTH,file) == NULL){
+			fprintf(stderr,"pmparser : fgets failed, %s\n",strerror(errno));
+	//		return NULL;
+		}
+		//allocate a node
+		tmp=(procmaps_struct*)malloc(sizeof(procmaps_struct));
+		//fill the node
+		_pmparser_split_line(buf,addr1,addr2,perm,offset, dev,inode,pathname);
+		//printf("#%s",buf);
+		//printf("%s-%s %s %s %s %s\t%s\n",addr1,addr2,perm,offset,dev,inode,pathname);
+		//addr_start & addr_end
+		unsigned long l_addr_start;
+		(void) l_addr_start;
+		sscanf(addr1,"%lx",(long unsigned *)&tmp->addr_start );
+		sscanf(addr2,"%lx",(long unsigned *)&tmp->addr_end );
+		//size
+		tmp->length=(unsigned long)(tmp->addr_end-tmp->addr_start);
+		//perm
+		strcpy(tmp->perm,perm);
+		tmp->is_r=(perm[0]=='r');
+		tmp->is_w=(perm[1]=='w');
+		tmp->is_x=(perm[2]=='x');
+		tmp->is_p=(perm[3]=='p');
+
+		//offset
+		sscanf(offset,"%lx",&tmp->offset );
+		//device
+		strcpy(tmp->dev,dev);
+		//inode
+		tmp->inode=atoi(inode);
+		//pathname
+		strcpy(tmp->pathname,pathname);
+		printf("pathname -> %s start 0x%llx\n",  pathname, (long long unsigned)tmp->addr_start);
+		if(strlen(pathname) == 0 && tmp->is_r && tmp->is_w)
+		{
+			printf("add to list\n");
+			tmp->track_uffd=1;	
+		}
+		tmp->next=NULL;
+		//attach the node
+		if(ind==0){
+			list_maps=tmp;
+			list_maps->next=NULL;
+			current_node=list_maps;
+		}
+		current_node->next=tmp;
+		current_node=tmp;
+		ind++;
+		//printf("%s",buf);
+	}
+
+	//close file
+	fclose(file);
+
+
+	//g_last_head=list_maps;
+	maps_it->head = list_maps;
+	maps_it->current =  list_maps;
+	return maps_it;
+}
+
+
+procmaps_struct* pmparser_next(procmaps_iterator* p_procmaps_it){
+	if(p_procmaps_it->current == NULL)
+		return NULL;
+	procmaps_struct* p_current = p_procmaps_it->current;
+	p_procmaps_it->current = p_procmaps_it->current->next;
+	return p_current;
+	/*
+	if(g_current==NULL){
+		g_current=g_last_head;
+	}else
+		g_current=g_current->next;
+
+	return g_current;
+	*/
+}
+
+
+
+void pmparser_free(procmaps_iterator* p_procmaps_it){
+	procmaps_struct* maps_list = p_procmaps_it->head;
+	if(maps_list==NULL) return ;
+	procmaps_struct* act=maps_list;
+	procmaps_struct* nxt=act->next;
+	while(act!=NULL){
+		free(act);
+		act=nxt;
+		if(nxt!=NULL)
+			nxt=nxt->next;
+	}
+	free(p_procmaps_it);
+}
+
+
 
 void pmparser_print(procmaps_struct* map, int order){
 

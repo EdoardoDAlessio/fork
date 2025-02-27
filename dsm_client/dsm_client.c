@@ -33,6 +33,7 @@
 #include "log.h"
 #include "infect-rpc.h"
 #include "../compel/include/infect-priv.h"
+#include "../compel/include/uapi/infect-util.h"
 #include "parsemap.h"
 #include "config.h"
 #include "dsm_log.h"
@@ -40,6 +41,7 @@
 #include "../criu/user.h"
 
 #define err_and_ret(msg) do { fprintf(stderr, msg);  return ; } while (0)
+#define err_and_ret_zero(msg) do { fprintf(stderr, msg);  return 0; } while (0)
 
 #define MAX_THREADS 10
 #define MAX_STRING 250
@@ -56,8 +58,20 @@ struct params {
     int sock;
 };
 
+struct msg_info{
+	int msg_type;
+	long page_addr;
+	int page_size;
+		long msg_id;
+};
+
+void send_page_invalidate_msg(long addr,int sock);
+void set_page_status(long addr,int state);
+
 int compel_rpc_sync(unsigned int cmd, struct parasite_ctl *ctl);
 int compel_util_recv_fd(struct parasite_ctl *ctl, int *pfd);
+int handle_invalidate_page(struct msg_info *dsm_msg,int pid);
+
 int compel_syscall(struct parasite_ctl *ctl, int nr, long *ret,
                                          unsigned long arg1,
                                          unsigned long arg2,
@@ -77,12 +91,6 @@ struct page_list{
 struct page_list *page_list_data;
 int total_pages; 
 
-struct msg_info{
-	int msg_type;
-	long page_addr;
-	int page_size;
-	long msg_id;
-};
 
 enum msg_type{
         MSG_GET_PAGE_LIST,
@@ -203,12 +211,12 @@ static int connect_page_data_server(){
 		return -1;
 	}
 	return sock;
-}x
+}
 
 
 static int connect_server(){
 
-	int sock = 0://, valread;
+	int sock = 0;//, valread;
 	struct sockaddr_in serv_addr;
 
 	// create socket
@@ -246,7 +254,8 @@ static int get_page_data_from_origin(int sock,long addr,unsigned char *page_cont
 
 	while(data_read < page_size){
 		int ret = read(sock,page_content + data_read,page_size);
-		FT_PRINTF("page_read ret=%d\n",ret);
+		// FT_PRINTF("page_read ret=%d\n",ret);
+printf("page_read ret=%d\n",ret);
 		if(ret == 0)
 			exit(0);
 		data_read += ret;
@@ -258,8 +267,9 @@ static void *handler(void *arg)
 {
 	struct params *p = arg;
 	//char buf[page_size];
+	int ret;
 
-
+	(void) ret;
 	for (;;) {
 		struct uffd_msg msg;
 
@@ -296,7 +306,8 @@ static void *handler(void *arg)
 
 		int readres = read(p->uffd, &msg, sizeof(msg));
 		uffd_interrupted = 0;
-		FT_PRINTF("####### Fault START\n");
+		// FT_PRINTF("####### Fault START\n");
+printf("####### Fault START\n");
 
 		if (readres == -1) {
 			if (errno == EAGAIN)
@@ -320,15 +331,19 @@ static void *handler(void *arg)
 
 			if(msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP)
 			{
-				FT_PRINTF("fault for write-protect 0x%llx\n",addr);
+				// FT_PRINTF("fault for write-protect 0x%llx\n",addr);
+				printf("fault for write-protect 0x%llx\n",addr);
 /*
 				if(page_list_data[addr_to_index(addr)].state == PAGE_INVALID ){
-					FT_PRINTF("--------------- $$$$$$$$ PAGE_INVALID\n");
+					// // FT_PRINTF("--------------- $$$$$$$$ PAGE_INVALID\n");
+printf("--------------- $$$$$$$$ PAGE_INVALID\n");
 					bool is_write = 1;
-					FT_PRINTF("fault for over missing page %llx , writefault : %d\n",(long long)addr,is_write);
+					// // FT_PRINTF("fault for over missing page %llx , writefault : %d\n",(long long)addr,is_write);
+printf("fault for over missing page %llx , writefault : %d\n",(long long)addr,is_write);
 					unsigned char page_content[page_size];
 					get_page_data_from_origin(p->sock,addr,page_content,is_write);
-					FT_PRINTF("got the page\n");
+					// // FT_PRINTF("got the page\n");
+printf("got the page\n");
 
 					struct uffdio_copy copy;
 					copy.src = (long long)page_content;
@@ -350,16 +365,18 @@ static void *handler(void *arg)
 				prms.mode =  0; 
 
 				send_page_invalidate_msg(addr,p->sock);
-				read(p->sock, &ack,1);
+				ret = read(p->sock, &ack,1);
 				if(ack == 0x89)
 				{
-					FT_PRINTF("Page server says owner changed, we need to get the updated page");
+					// FT_PRINTF("Page server says owner changed, we need to get the updated page");
+					printf("Page server says owner changed, we need to get the updated page");
 					int data_read = 0;
 					
 					unsigned char page_content[4096];
 					while(data_read < page_size){
 						int ret = read(p->sock,page_content+data_read,page_size);
-						FT_PRINTF("#3 ret=%d\n",ret);
+						//  FT_PRINTF("#3 ret=%d\n",ret);
+						printf("#3 ret=%d\n",ret);
 						if(ret == 0)
 							exit(0);
 						data_read += ret;
@@ -372,27 +389,39 @@ static void *handler(void *arg)
 					if (ioctl(p->uffd, UFFDIO_COPY, &copy) == -1) {
 						perror("ioctl/copy");
 					}
-					FT_PRINTF(".........page write........\n");
-					for(int i=0x00;i<0x30;i++)
-						FT_PRINTF("%03d ",page_content[i]);
-					FT_PRINTF("\n");
-					FT_PRINTF("updated special page request\n");
+					// FT_PRINTF(".........page write........\n");
+					printf(".........page write........\n");
+					for(int i=0x00;i<0x30;i++){
+						//  FT_PRINTF("%03d ",page_content[i]);
+						printf("%03d ",page_content[i]);
+					}
+
+					// FT_PRINTF("\n");
+					printf("\n");
+					// FT_PRINTF("updated special page request\n");
+					printf("updated special page request\n");
 				}
 				if (ioctl(p->uffd, UFFDIO_WRITEPROTECT, &prms))
 					perror("write_protect\n");
-				FT_PRINTF("write flag cleared\n");
+				// FT_PRINTF("write flag cleared\n");
+				printf("write flag cleared\n");
 				set_page_status(addr,PAGE_MODIFIED);
-				if(uffd_interrupted)
-					FT_PRINTF(".........UFFD_INTERRUPTED..........\n");
+				if(uffd_interrupted){
+					// FT_PRINTF(".........UFFD_INTERRUPTED..........\n");
+					printf(".........UFFD_INTERRUPTED..........\n");
+				}
+
 			}
 
 			else {
 				//	pthread_mutex_lock(&mutex);
 				bool is_write =  msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WRITE;
-				FT_PRINTF("fault for missing page %llx , writefault : %d\n",(long long)addr,is_write);
+				// FT_PRINTF("fault for missing page %llx , writefault : %d\n",(long long)addr,is_write);
+				printf("fault for missing page %llx , writefault : %d\n",(long long)addr,is_write);
 				unsigned char page_content[page_size];
 				get_page_data_from_origin(p->sock,addr,page_content,is_write);
-				FT_PRINTF("got the page\n");
+				// FT_PRINTF("got the page\n");
+				printf("got the page\n");
 
 				struct uffdio_copy copy;
 				copy.src = (long long)page_content;
@@ -405,10 +434,15 @@ static void *handler(void *arg)
 					perror("ioctl/copy");
 					//exit(1);
 				}
-				FT_PRINTF("@@~~~~~~ page write ~~~~~~~~ copy_mode=%d\n",copy.mode);
-					for(int i=0x00;i<0x30;i++)
-						FT_PRINTF("%03d ",page_content[i]);
-					FT_PRINTF("\n");
+				// FT_PRINTF("@@~~~~~~ page write ~~~~~~~~ copy_mode=%d\n",copy.mode);
+				printf("@@~~~~~~ page write ~~~~~~~~ copy_mode=%lld\n",copy.mode);
+					for(int i=0x00;i<0x30;i++){
+						// FT_PRINTF("%03d ",page_content[i]);
+					printf("%03d ",page_content[i]);
+					}
+
+					// FT_PRINTF("\n");
+					printf("\n");
 
 				if(is_write)
 					set_page_status(addr,PAGE_MODIFIED);
@@ -420,7 +454,8 @@ static void *handler(void *arg)
 			uffd_interrupted=0;
 		}
 		//	pthread_mutex_unlock(&page_list_data[addr_to_index(addr)].mutex);
-		FT_PRINTF("####### Fault END\n");
+		// FT_PRINTF("####### Fault END\n");
+		printf("####### Fault END\n");
 
 	}
 
@@ -440,9 +475,11 @@ int addr_to_index(long long addr){
 
 static int get_page_list_from_origin(int sock){
 
-    //int  valread;
+    int  valread;
     //struct sockaddr_in serv_addr;
     struct msg_info page_list_msg;
+
+    (void) valread;
 
     page_list_msg.msg_type = MSG_GET_PAGE_LIST;
     send(sock,&page_list_msg,sizeof(struct msg_info),0);
@@ -470,7 +507,8 @@ void send_page_invalidate_msg(long addr,int sock){
 
         struct msg_info dsm_msg;
 
-        FT_PRINTF("send_page_invalidate_msg :%lx\n",addr);
+        // FT_PRINTF("send_page_invalidate_msg :%lx\n",addr);
+printf("send_page_invalidate_msg :%lx\n",addr);
         dsm_msg.msg_type = MSG_INVALIDATE_PAGE;
         dsm_msg.page_addr = addr;
 
@@ -484,6 +522,8 @@ void invalidate_restored_pages(long *addr,int length,int pid,	struct parasite_ct
 	struct infect_ctx *ictx;
 	long *arg;
 
+	(void) ictx;
+	(void) state;
 
 	arg = compel_parasite_args(ctl, long);
 
@@ -520,7 +560,7 @@ void set_page_status(long addr,int state){
 	page_list_data[addr_to_index(addr)].state = state;
 }
 
-void handle_invalidate_page(struct msg_info *dsm_msg,int pid){
+int handle_invalidate_page(struct msg_info *dsm_msg,int pid){
 
 	int state;
 	struct parasite_ctl *ctl;
@@ -541,7 +581,7 @@ void handle_invalidate_page(struct msg_info *dsm_msg,int pid){
 
 	ctl = compel_prepare(pid);
 	if (!ctl)
-		err_and_ret("Can't prepare for infection\n");
+		err_and_ret_zero("Can't prepare for infection\n");
 
 	/*
 	 * First -- the infection context. Most of the stuff
@@ -555,13 +595,13 @@ void handle_invalidate_page(struct msg_info *dsm_msg,int pid){
 	parasite_setup_c_header(ctl);
 
 	if (compel_infect(ctl, 1, sizeof(int)))
-		err_and_ret("Can't infect victim\n");
+		err_and_ret_zero("Can't infect victim\n");
 
 	arg = compel_parasite_args(ctl, long);
 	*arg = 	dsm_msg->page_addr;
 	if (compel_rpc_call_sync(EXEC_MADVISE, ctl))
-		err_and_ret("Can't run parasite command 1");
-	printf("madvise Success for %llx\n", dsm_msg->page_addr);
+		err_and_ret_zero("Can't run parasite command 1");
+	printf("madvise Success for %lx\n", dsm_msg->page_addr);
 	
 	set_page_status(dsm_msg->page_addr,PAGE_INVALID);
 
@@ -577,11 +617,11 @@ void handle_invalidate_page(struct msg_info *dsm_msg,int pid){
 		
 
 	if (compel_resume_task(pid, state, state))
-		err_and_ret("Can't unseize task");
+		err_and_ret_zero("Can't unseize task");
 	else
 		printf("resume success\n");
 
-	
+	return 0;
 	
 }
 
@@ -596,7 +636,7 @@ void change_to_wp(long addr,int uffd){
         if (ioctl(uffd, UFFDIO_WRITEPROTECT, &uf_wp))
         {
                 perror("write_protect\n");
-                printf("page : %llx\n",addr);
+                printf("page : %lx\n",addr);
         }
         printf("change_to_wp %lx \n",addr);
 
@@ -673,15 +713,18 @@ void test_vmsplice(int pid){
 }
 #endif
 
-void handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
+int handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
 
 	int state;
 	struct parasite_ctl *ctl;
 	struct infect_ctx *ictx;
 	long *arg;
 	int val, ret,i;
-        int p[2];
+    int p[2];
 	unsigned char page_content[4096];
+
+	(void) state;
+	(void) val;
 
 	compel_log_init(print_vmsg, COMPEL_LOG_DEBUG);
 
@@ -693,7 +736,7 @@ void handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
 	printf("Preparing parasite ctl\n");
 	ctl = compel_prepare(pid);
 	if (!ctl)
-		err_and_ret("Can't prepare for infection");
+		err_and_ret_zero("Can't prepare for infection");
 
 	printf("Configuring contexts\n");
 
@@ -710,7 +753,7 @@ void handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
 
 	printf("Infecting\n");
 	if (compel_infect(ctl, 1, sizeof(int)))
-		err_and_ret("Can't infect victim\n");
+		err_and_ret_zero("Can't infect victim\n");
 
 	arg = compel_parasite_args(ctl, long);
 	*arg = 	dsm_msg->page_addr;
@@ -718,7 +761,7 @@ void handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
         ret = compel_rpc_call(DUMP_SINGLE_PAGE , ctl);
         if (ret < 0)
                 return -1;
-        pipe(p);
+        ret = pipe(p);
         ret = compel_util_send_fd(ctl, p[1]);
         if (ret)
                 return -1;
@@ -729,7 +772,7 @@ void handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
                 return -1;
 
         //Read from parsite pip
-        read(p[0], page_content,4096);
+        ret = read(p[0], page_content,4096);
 
 	printf("..................... 0x%lx\n",dsm_msg->page_addr);
         for(i=0x00;i<0x30;i++){
@@ -737,7 +780,7 @@ void handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
 	}
         printf("\n");
 
-        send(page_data_socket,page_content,4096,0);
+        ret = send(page_data_socket,page_content,4096,0);
         printf("page_transfer_complete\n");
 	if(dsm_msg->msg_type == MSG_GET_PAGE_DATA_INVALID){
 		set_page_status(dsm_msg->page_addr,PAGE_INVALID);
@@ -757,16 +800,18 @@ void handle_page_data_request(int pid,struct msg_info *dsm_msg,int uffd){
                 printf("Can't cure (pid: %d) from parasite\n",pid);
 
 	if (compel_resume_task(pid, state, state))
-		err_and_ret("Can't unseize task");
+		err_and_ret_zero("Can't unseize task");
 
         close(p[0]);
         close(p[1]);
+	return 0;
 }
 
 void listen_for_commands(int sock,int pid,int uffd){
 
 	int msg_served=-1,val;
 
+	(void) val;
 	kill(pid,SIGCONT);
 
 	for(;;){
@@ -781,7 +826,8 @@ void listen_for_commands(int sock,int pid,int uffd){
 			printf("invalid read \n");
 			exit(1);
 		}
-		RED_PRINTF("msg_id: %d\n",dsm_msg.msg_id);
+		//RED_PRINTF("msg_id: %d\n",dsm_msg.msg_id);
+		printf("msg_id: %ld\n",dsm_msg.msg_id);
 
                 switch(dsm_msg.msg_type){
 
@@ -789,7 +835,7 @@ void listen_for_commands(int sock,int pid,int uffd){
 
                         case MSG_GET_PAGE_DATA:
 			case MSG_GET_PAGE_DATA_INVALID:
-				printf("[MSG] MSG_GET_PAGE_DATA 0x%llx\n",dsm_msg.page_addr );
+				printf("[MSG] MSG_GET_PAGE_DATA 0x%lx\n",dsm_msg.page_addr );
 				pthread_mutex_lock(&page_list_data[addr_to_index(dsm_msg.page_addr)].mutex);
 				if(get_page_status(dsm_msg.page_addr) == PAGE_INVALID)
 				{
@@ -797,11 +843,11 @@ void listen_for_commands(int sock,int pid,int uffd){
 				}
 				handle_page_data_request(pid,&dsm_msg,uffd);
 				pthread_mutex_unlock(&page_list_data[addr_to_index(dsm_msg.page_addr)].mutex);
-				printf("[MSG] MSG_GET_PAGE_DATA 0x%llx DONE\n",dsm_msg.page_addr );
+				printf("[MSG] MSG_GET_PAGE_DATA 0x%lx DONE\n",dsm_msg.page_addr );
                                 break;  
 			case MSG_INVALIDATE_PAGE:
 				uffd_interrupted = 1;
-				printf("[MSG] MSG_INVALIDATE_PAGE 0x%llx\n",dsm_msg.page_addr );
+				printf("[MSG] MSG_INVALIDATE_PAGE 0x%lx\n",dsm_msg.page_addr );
 				if(get_page_status(dsm_msg.page_addr) == PAGE_INVALID)
 				{
 					printf("Page dropped already\n");
@@ -811,7 +857,7 @@ void listen_for_commands(int sock,int pid,int uffd){
 				pthread_mutex_lock(&page_list_data[addr_to_index(dsm_msg.page_addr)].mutex);
 				handle_invalidate_page(&dsm_msg,pid);
 				pthread_mutex_unlock(&page_list_data[addr_to_index(dsm_msg.page_addr)].mutex);
-				printf("[MSG] MSG_INVALIDATE_PAGE DONE 0x%llx\n",dsm_msg.page_addr );
+				printf("[MSG] MSG_INVALIDATE_PAGE DONE 0x%lx\n",dsm_msg.page_addr );
 				send(page_data_socket,&ack,1,0);
 				break;	
                         default:
@@ -833,15 +879,17 @@ static int do_infection(int pid ,int sock)
 
 	compel_log_init(print_vmsg, COMPEL_LOG_DEBUG);
 
+	(void) arg;
+
 	printf("Stopping task\n");
 	state = compel_stop_task(pid);
 	if (state < 0)
-		err_and_ret("Can't stop task");
+		err_and_ret_zero("Can't stop task");
 
 	printf("Preparing parasite ctl\n");
 	ctl = compel_prepare(pid);
 	if (!ctl)
-		err_and_ret("Can't prepare for infection");
+		err_and_ret_zero("Can't prepare for infection");
 
 	printf("Configuring contexts\n");
 
@@ -858,7 +906,7 @@ static int do_infection(int pid ,int sock)
 
 	printf("Infecting\n");
 	if (compel_infect(ctl, 1, sizeof(int)))
-		err_and_ret("Can't infect victim");
+		err_and_ret_zero("Can't infect victim");
 
 	arg = compel_parasite_args(ctl, long);
 
@@ -882,7 +930,7 @@ static int do_infection(int pid ,int sock)
 
 	int success=0;
 	struct uffdio_register uffdio_register;	
-	int i;
+	int i=0;
 	invalidate_restored_pages(NULL,total_pages,pid,ctl);
 
 
@@ -893,24 +941,24 @@ static int do_infection(int pid ,int sock)
 			continue;
 		}
 		printf("\n............................\n"); 
-		printf("maps_tmp->addr_start %lx %d\n",maps_tmp->addr_start,maps_tmp->length,maps_tmp->length/4096);
-		uffdio_register.range.start = maps_tmp->addr_start;
+		printf("maps_tmp->addr_start %p %ld %ld\n",maps_tmp->addr_start,maps_tmp->length,maps_tmp->length/4096);
+		uffdio_register.range.start = (long long unsigned) maps_tmp->addr_start;
 		uffdio_register.range.len =  maps_tmp->length; 
 		uffdio_register.mode =    UFFDIO_REGISTER_MODE_MISSING ;
 		uffdio_register.mode =   UFFDIO_REGISTER_MODE_WP | UFFDIO_REGISTER_MODE_MISSING ;
 		if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register) == -1) {
-			printf("[UFFDIO_REGISTER] Failed page %llx\n",page_list_data[i].saddr);
+			printf("[UFFDIO_REGISTER] Failed page %lx\n",page_list_data[i].saddr);
 		}
 
 		struct uffdio_writeprotect uf_wp;
-                uf_wp.range.start = maps_tmp->addr_start;
+                uf_wp.range.start = (long long unsigned) maps_tmp->addr_start;
                 uf_wp.range.len = maps_tmp->length ;
                 uf_wp.mode =  UFFDIO_WRITEPROTECT_MODE_WP;
 
                 if (ioctl(uffd, UFFDIO_WRITEPROTECT, &uf_wp))
                 {    
                         perror("write_protect\n");
-                        printf("page : %llx\n",page_list_data[i].saddr);
+                        printf("page : %lx\n",page_list_data[i].saddr);
                 }   
 		success++;
 	}
@@ -940,7 +988,7 @@ static int do_infection(int pid ,int sock)
 
 
 	if (compel_resume_task(pid, state, state))
-		err_and_ret("Can't unseize task");
+		err_and_ret_zero("Can't unseize task");
 
 
 	printf("Done; Starting uffd_thread\n");
@@ -951,9 +999,9 @@ static int do_infection(int pid ,int sock)
 
 int main(int argc, char **argv)
 {
-	int pid,sock;
+	int pid,sock, ret;
 	int uffd;
-
+	(void) ret;
 	if(argc < 2){
 		printf("Usage: %s <pid>\n",argv[0]);
 	}
@@ -962,7 +1010,7 @@ int main(int argc, char **argv)
 	{
 		char msg[25];
 		int fd = open("/tmp/pipe_client", O_RDONLY);
-		read(fd, msg, sizeof(msg));
+		ret = read(fd, msg, sizeof(msg));
 		printf("FIFO: %s\n", msg);
 		pid = atoi(msg);
 		close(fd);

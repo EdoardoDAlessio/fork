@@ -100,14 +100,15 @@ static int dump_single_page(void *args){
 
 	int p, ret, tsock;
 	int nr_segs =1;
+	struct iovec miov;
 	tsock = parasite_get_rpc_sock();
 
 	p = recv_fd(tsock);
 
-	struct iovec miov;
-	miov.iov_base =*(long *)args;
+
+	miov.iov_base =(void *)(long *)args;
 	miov.iov_len = 4096;
-	pr_err("vmsplice at = %lx\n",miov.iov_base);
+	pr_err("vmsplice at = %p\n",miov.iov_base);
 	ret = sys_vmsplice(p, &miov, nr_segs,	 SPLICE_F_GIFT | SPLICE_F_NONBLOCK);
 	pr_err("vmsplice ret = %d\n",ret);
 	return 0;
