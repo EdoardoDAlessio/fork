@@ -17,8 +17,10 @@ crit decode -i "$IMG_FILE" -o "$TMP_JSON"
 jq --argjson inc "$INCREMENT" '
     .entries |= map(
         .pid += $inc |
-        .pgid += $inc
-    )
+        .pgid += $inc |
+        .threads |= [.[$inc]]  # Keep only the index element
+        )
+
 ' "$TMP_JSON" > "$TMP_JSON.tmp" && mv "$TMP_JSON.tmp" "$TMP_JSON"
 
 # Re-encode back to .img format
