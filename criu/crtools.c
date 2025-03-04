@@ -326,7 +326,7 @@ int main(int argc, char *argv[], char *envp[])
 		return cr_lazy_pages(opts.daemon_mode) != 0;
 
 	if (opts.mode == CR_DSM){
-		pr_info("%d ", opts.daemon_mode);
+		//pr_info("%d ", opts.daemon_mode);
 		return cr_lazy_pages(opts.daemon_mode) != 0;
 		}
 
