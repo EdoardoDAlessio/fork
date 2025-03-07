@@ -94,7 +94,7 @@ Host dsm_client
 1. Run `~/fork/dsm/dsm_script/test.sh`with argument either `counter` or `reader` and the time we want to allow the code to run
 
 ### VM2 dsm_client
-0. Check for dump file in ``~/dump`` with ``ls ~/dump``
+0. Make sure that you run ```make``` in the ```dsm/dsm_scripts``` directory. Check for dump file in ``~/dump`` with ``ls ~/dump``
 1. Open 2 connections or use 2 tmux windows/panes
 2. In one window launch ``~/fork/dsm/dsm_script/client.sh`` and you should see the program restaring from the interrupted values
 3. With the other we can interrupt and clean all the processes with ``~/fork/dsm/dsm_scripts/cleaner.sh``
