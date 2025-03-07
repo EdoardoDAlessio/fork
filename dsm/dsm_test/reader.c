@@ -5,7 +5,7 @@
 
 int counter = 0;  // Shared global variable
 
-void *thread_function(void *arg) {
+void *thread_function() {
 	while (1) {
 		sleep(5);  // Wait for 5 seconds
 		printf("[Thread] Counter: %d\n", counter);

@@ -6,7 +6,7 @@
 int counter = 0;  // Shared global variable
 pthread_mutex_t lock;
 
-void *thread_function(void *arg) {
+void *thread_function() {
 	while (1) {
 		sleep(5);  // Wait for 5 seconds
 		pthread_mutex_lock(&lock);
