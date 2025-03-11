@@ -409,6 +409,272 @@ static int populate_pid_proc(void)
 	return 0;
 }
 
+static rt_sigaction_t sigchld_act;
+/*
+ * If parent's sigaction has blocked SIGKILL (which is non-sense),
+ * this parent action is non-valid and shouldn't be inherited.
+ * Used to mark parent_act* no more valid.
+ */
+static rt_sigaction_t parent_act[SIGMAX];
+#ifdef CONFIG_COMPAT
+static rt_sigaction_t_compat parent_act_compat[SIGMAX];
+#endif
+
+static bool sa_inherited(int sig, rt_sigaction_t *sa)
+{
+	rt_sigaction_t *pa;
+	int i;
+
+	if (current == root_item)
+		return false; /* XXX -- inherit from CRIU? */
+
+	pa = &parent_act[sig];
+
+	/* Omitting non-valid sigaction */
+	if (pa->rt_sa_mask.sig[0] & (1 << SIGKILL))
+		return false;
+
+	for (i = 0; i < _KNSIG_WORDS; i++)
+		if (pa->rt_sa_mask.sig[i] != sa->rt_sa_mask.sig[i])
+			return false;
+
+	return pa->rt_sa_handler == sa->rt_sa_handler &&
+		pa->rt_sa_flags == sa->rt_sa_flags &&
+		pa->rt_sa_restorer == sa->rt_sa_restorer;
+}
+
+static int restore_native_sigaction(int sig, SaEntry *e)
+{
+	rt_sigaction_t act;
+	int ret;
+
+	ASSIGN_TYPED(act.rt_sa_handler, decode_pointer(e->sigaction));
+	ASSIGN_TYPED(act.rt_sa_flags, e->flags);
+	ASSIGN_TYPED(act.rt_sa_restorer, decode_pointer(e->restorer));
+#ifdef CONFIG_MIPS
+	e->has_mask_extended = 1;
+	BUILD_BUG_ON(sizeof(e->mask)* 2 != sizeof(act.rt_sa_mask.sig));
+
+	memcpy(&(act.rt_sa_mask.sig[0]), &e->mask, sizeof(act.rt_sa_mask.sig[0]));
+	memcpy(&(act.rt_sa_mask.sig[1]), &e->mask_extended, sizeof(act.rt_sa_mask.sig[1]));
+#else
+	BUILD_BUG_ON(sizeof(e->mask) != sizeof(act.rt_sa_mask.sig));
+	memcpy(act.rt_sa_mask.sig, &e->mask, sizeof(act.rt_sa_mask.sig));
+#endif
+	if (sig == SIGCHLD) {
+		sigchld_act = act;
+		return 0;
+	}
+
+	if (sa_inherited(sig - 1, &act))
+		return 1;
+
+	/*
+	 * A pure syscall is used, because glibc
+	 * sigaction overwrites se_restorer.
+	 */
+	ret = syscall(SYS_rt_sigaction, sig, &act, NULL, sizeof(k_rtsigset_t));
+	if (ret < 0) {
+		pr_perror("Can't restore sigaction");
+		return ret;
+	}
+
+	parent_act[sig - 1] = act;
+	/* Mark SIGKILL blocked which makes compat sigaction non-valid */
+#ifdef CONFIG_COMPAT
+	parent_act_compat[sig - 1].rt_sa_mask.sig[0] |= 1 << SIGKILL;
+#endif
+
+	return 1;
+}
+
+static void *stack32;
+
+#ifdef CONFIG_COMPAT
+static bool sa_compat_inherited(int sig, rt_sigaction_t_compat *sa)
+{
+	rt_sigaction_t_compat *pa;
+	int i;
+
+	if (current == root_item)
+		return false;
+
+	pa = &parent_act_compat[sig];
+
+	/* Omitting non-valid sigaction */
+	if (pa->rt_sa_mask.sig[0] & (1 << SIGKILL))
+		return false;
+
+	for (i = 0; i < _KNSIG_WORDS; i++)
+		if (pa->rt_sa_mask.sig[i] != sa->rt_sa_mask.sig[i])
+			return false;
+
+	return pa->rt_sa_handler == sa->rt_sa_handler &&
+		pa->rt_sa_flags == sa->rt_sa_flags &&
+		pa->rt_sa_restorer == sa->rt_sa_restorer;
+}
+
+static int restore_compat_sigaction(int sig, SaEntry *e)
+{
+	rt_sigaction_t_compat act;
+	int ret;
+
+	ASSIGN_TYPED(act.rt_sa_handler, (u32)e->sigaction);
+	ASSIGN_TYPED(act.rt_sa_flags, e->flags);
+	ASSIGN_TYPED(act.rt_sa_restorer, (u32)e->restorer);
+	BUILD_BUG_ON(sizeof(e->mask) != sizeof(act.rt_sa_mask.sig));
+	memcpy(act.rt_sa_mask.sig, &e->mask, sizeof(act.rt_sa_mask.sig));
+
+	if (sig == SIGCHLD) {
+		memcpy(&sigchld_act, &act, sizeof(rt_sigaction_t_compat));
+		return 0;
+	}
+
+	if (sa_compat_inherited(sig - 1, &act))
+		return 1;
+
+	if (!stack32) {
+		stack32 = alloc_compat_syscall_stack();
+		if (!stack32)
+			return -1;
+	}
+
+	ret = arch_compat_rt_sigaction(stack32, sig, &act);
+	if (ret < 0) {
+		pr_err("Can't restore compat sigaction: %d\n", ret);
+		return ret;
+	}
+
+	parent_act_compat[sig - 1] = act;
+	/* Mark SIGKILL blocked which makes native sigaction non-valid */
+	parent_act[sig - 1].rt_sa_mask.sig[0] |= 1 << SIGKILL;
+
+	return 1;
+}
+#else
+static int restore_compat_sigaction(int sig, SaEntry *e)
+{
+	return -1;
+}
+#endif
+
+static int prepare_sigactions_from_core(TaskCoreEntry *tc)
+{
+	int sig, i;
+
+	if (tc->n_sigactions != SIGMAX - 2) {
+		pr_err("Bad number of sigactions in the image (%d, want %d)\n",
+				(int)tc->n_sigactions, SIGMAX - 2);
+		return -1;
+	}
+
+	pr_info("Restore on-core sigactions for %d\n", vpid(current));
+
+	for (sig = 1, i = 0; sig <= SIGMAX; sig++) {
+		int ret;
+		SaEntry *e;
+		bool sigaction_is_compat;
+
+		if (sig == SIGKILL || sig == SIGSTOP)
+			continue;
+
+		e = tc->sigactions[i++];
+		sigaction_is_compat = e->has_compat_sigaction && e->compat_sigaction;
+		if (sigaction_is_compat)
+			ret = restore_compat_sigaction(sig, e);
+		else
+			ret = restore_native_sigaction(sig, e);
+
+		if (ret < 0)
+			return ret;
+	}
+
+	return 0;
+}
+
+/* Returns number of restored signals, -1 or negative errno on fail */
+static int restore_one_sigaction(int sig, struct cr_img *img, int pid)
+{
+	bool sigaction_is_compat;
+	SaEntry *e;
+	int ret = 0;
+
+	BUG_ON(sig == SIGKILL || sig == SIGSTOP);
+
+	ret = pb_read_one_eof(img, &e, PB_SIGACT);
+	if (ret == 0) {
+		if (sig != SIGMAX_OLD + 1) { /* backward compatibility */
+			pr_err("Unexpected EOF %d\n", sig);
+			return -1;
+		}
+		pr_warn("This format of sigacts-%d.img is deprecated\n", pid);
+		return -1;
+	}
+	if (ret < 0)
+		return ret;
+
+	sigaction_is_compat = e->has_compat_sigaction && e->compat_sigaction;
+	if (sigaction_is_compat)
+		ret = restore_compat_sigaction(sig, e);
+	else
+		ret = restore_native_sigaction(sig, e);
+
+	sa_entry__free_unpacked(e, NULL);
+
+	return ret;
+}
+
+static int prepare_sigactions_from_image(void)
+{
+	int pid = vpid(current);
+	struct cr_img *img;
+	int sig, rst = 0;
+	int ret = 0;
+
+	pr_info("Restore sigacts for %d\n", pid);
+
+	img = open_image(CR_FD_SIGACT, O_RSTR, pid);
+	if (!img)
+		return -1;
+
+	for (sig = 1; sig <= SIGMAX; sig++) {
+		if (sig == SIGKILL || sig == SIGSTOP)
+			continue;
+
+		ret = restore_one_sigaction(sig, img, pid);
+		if (ret < 0)
+			break;
+		if (ret)
+			rst++;
+	}
+
+	pr_info("Restored %d/%d sigacts\n", rst,
+			SIGMAX - 3 /* KILL, STOP and CHLD */);
+
+	close_image(img);
+	return ret;
+}
+
+static int prepare_sigactions(CoreEntry *core)
+{
+	int ret;
+
+	if (!task_alive(current))
+		return 0;
+
+	if (core->tc->n_sigactions != 0)
+		ret = prepare_sigactions_from_core(core->tc);
+	else
+		ret = prepare_sigactions_from_image();
+
+	if (stack32) {
+		free_compat_syscall_stack(stack32);
+		stack32 = NULL;
+	}
+
+	return ret;
+}
+
 static int __collect_child_pids(struct pstree_item *p, int state, unsigned int *n)
 {
 	struct pstree_item *pi;
@@ -622,6 +888,7 @@ static int prepare_proc_misc(pid_t pid, TaskCoreEntry *tc, struct task_restore_a
 	return 0;
 }
 
+static int prepare_itimers(int pid, struct task_restore_args *args, CoreEntry *core);
 static int prepare_mm(pid_t pid, struct task_restore_args *args);
 
 static int restore_one_alive_task(int pid, CoreEntry *core)
@@ -1080,6 +1347,7 @@ static int set_next_pid(void *arg)
 
 static inline int fork_with_pid(struct pstree_item *item)
 {
+	unsigned long clone_flags;
 	struct cr_clone_arg ca;
 	struct ns_id *pid_ns = NULL;
 	bool external_pidns = false;
@@ -1142,6 +1410,9 @@ static inline int fork_with_pid(struct pstree_item *item)
 	if (!current && pid_ns && pid_ns->ext_key)
 		external_pidns = true;
 
+	//saved_pid = pid;
+	//pr_info("Forking task with %d pid (flags 0x%lx)\n", pid, ca.clone_flags);
+
 	if (external_pidns) {
 		int fd;
 
@@ -1150,6 +1421,13 @@ static inline int fork_with_pid(struct pstree_item *item)
 			pr_err("Unable to restore into an empty PID namespace\n");
 			return -1;
 		}
+
+		/*
+		 * Restoring into an existing namespace means that CLONE_NEWPID
+		 * needs to be removed during clone() as the process will be
+		 * created in the correct PID namespace thanks to switch_ns_by_fd().
+		 */
+		clone_flags &= ~CLONE_NEWPID;
 
 		fd = inherit_fd_lookup_id(pid_ns->ext_key);
 		if (fd < 0) {
@@ -1171,7 +1449,7 @@ static inline int fork_with_pid(struct pstree_item *item)
 	ca.clone_flags = rsti(item)->clone_flags;
 
 	BUG_ON(ca.clone_flags & CLONE_VM);
-
+	saved_pid = pid;
 	pr_info("Forking task with %d pid (flags 0x%lx)\n", pid, ca.clone_flags);
 
 	if (!(ca.clone_flags & CLONE_NEWPID)) {
@@ -1850,6 +2128,24 @@ static int catch_tasks(bool root_seized)
 	return 0;
 }
 
+static int clear_breakpoints(void)
+{
+	struct pstree_item *item;
+	int ret = 0, i;
+
+	if (fault_injected(FI_NO_BREAKPOINTS))
+		return 0;
+
+	for_each_pstree_item(item) {
+		if (!task_alive(item))
+			continue;
+		for (i = 0; i < item->nr_threads; i++)
+			ret |= ptrace_flush_breakpoints(item->threads[i].real);
+	}
+
+	return ret;
+}
+
 static void finalize_restore(void)
 {
 	struct pstree_item *item;
@@ -1986,6 +2282,38 @@ static void reap_zombies(void)
 			return;
 		}
 	}
+}
+//DMS
+int check_pipe_client_file(void);
+void start_dsm_client(int);
+
+int check_pipe_client_file(){
+
+        if (access("/tmp/pipe_client", F_OK) == 0) {
+                return 1;
+        } else {
+		pr_perror("File Not Found\n");
+                return 0;
+        }
+
+}
+
+void start_dsm_client(int pid){
+
+	int fd,ret;
+	char msg[20];
+
+	sprintf(msg,"%d",pid);
+
+	pr_info("Starting DSM Client :%s\n",msg);
+	if(!check_pipe_client_file())
+		return;
+
+        fd = open("/tmp/pipe_client", O_WRONLY);
+
+        ret = write(fd, msg, strlen(msg)+1);
+	pr_info("Starting DSM Client, Write to pipe:%s %d\n",msg,ret);
+        close(fd);
 }
 
 static int restore_root_task(struct pstree_item *init)
@@ -2268,6 +2596,7 @@ skip_ns_bouncing:
 		goto out_kill_network_unlocked;
 
 	pr_info("Restore finished successfully. Tasks resumed.\n");
+	start_dsm_client(saved_pid);
 	write_stats(RESTORE_STATS);
 
 	/* This has the effect of dismissing the image streamer */
@@ -2459,6 +2788,254 @@ static long restorer_get_vma_hint(struct list_head *tgt_vma_list, struct list_he
 	}
 
 	return -1;
+}
+
+static inline int timeval_valid(struct timeval *tv)
+{
+	return (tv->tv_sec >= 0) && ((unsigned long)tv->tv_usec < USEC_PER_SEC);
+}
+
+static inline int decode_itimer(char *n, ItimerEntry *ie, struct itimerval *val)
+{
+	if (ie->isec == 0 && ie->iusec == 0) {
+		memzero_p(val);
+		return 0;
+	}
+
+	val->it_interval.tv_sec = ie->isec;
+	val->it_interval.tv_usec = ie->iusec;
+
+	if (!timeval_valid(&val->it_interval)) {
+		pr_err("Invalid timer interval\n");
+		return -1;
+	}
+
+	if (ie->vsec == 0 && ie->vusec == 0) {
+		/*
+		 * Remaining time was too short. Set it to
+		 * interval to make the timer armed and work.
+		 */
+		val->it_value.tv_sec = ie->isec;
+		val->it_value.tv_usec = ie->iusec;
+	} else {
+		val->it_value.tv_sec = ie->vsec;
+		val->it_value.tv_usec = ie->vusec;
+	}
+
+	if (!timeval_valid(&val->it_value)) {
+		pr_err("Invalid timer value\n");
+		return -1;
+	}
+
+	pr_info("Restored %s timer to %ld.%ld -> %ld.%ld\n", n,
+			val->it_value.tv_sec, val->it_value.tv_usec,
+			val->it_interval.tv_sec, val->it_interval.tv_usec);
+
+	return 0;
+}
+
+/*
+ * Legacy itimers restore from CR_FD_ITIMERS
+ */
+
+static int prepare_itimers_from_fd(int pid, struct task_restore_args *args)
+{
+	int ret = -1;
+	struct cr_img *img;
+	ItimerEntry *ie;
+
+	if (!deprecated_ok("Itimers"))
+		return -1;
+
+	img = open_image(CR_FD_ITIMERS, O_RSTR, pid);
+	if (!img)
+		return -1;
+
+	ret = pb_read_one(img, &ie, PB_ITIMER);
+	if (ret < 0)
+		goto out;
+	ret = decode_itimer("real", ie, &args->itimers[0]);
+	itimer_entry__free_unpacked(ie, NULL);
+	if (ret < 0)
+		goto out;
+
+	ret = pb_read_one(img, &ie, PB_ITIMER);
+	if (ret < 0)
+		goto out;
+	ret = decode_itimer("virt", ie, &args->itimers[1]);
+	itimer_entry__free_unpacked(ie, NULL);
+	if (ret < 0)
+		goto out;
+
+	ret = pb_read_one(img, &ie, PB_ITIMER);
+	if (ret < 0)
+		goto out;
+	ret = decode_itimer("prof", ie, &args->itimers[2]);
+	itimer_entry__free_unpacked(ie, NULL);
+	if (ret < 0)
+		goto out;
+out:
+	close_image(img);
+	return ret;
+}
+
+static int prepare_itimers(int pid, struct task_restore_args *args, CoreEntry *core)
+{
+	int ret = 0;
+	TaskTimersEntry *tte = core->tc->timers;
+
+	if (!tte)
+		return prepare_itimers_from_fd(pid, args);
+
+	ret |= decode_itimer("real", tte->real, &args->itimers[0]);
+	ret |= decode_itimer("virt", tte->virt, &args->itimers[1]);
+	ret |= decode_itimer("prof", tte->prof, &args->itimers[2]);
+
+	return ret;
+}
+
+static inline int timespec_valid(struct timespec *ts)
+{
+	return (ts->tv_sec >= 0) && ((unsigned long)ts->tv_nsec < NSEC_PER_SEC);
+}
+
+static inline int decode_posix_timer(PosixTimerEntry *pte,
+		struct restore_posix_timer *pt)
+{
+	pt->val.it_interval.tv_sec = pte->isec;
+	pt->val.it_interval.tv_nsec = pte->insec;
+
+	if (!timespec_valid(&pt->val.it_interval)) {
+		pr_err("Invalid timer interval(posix)\n");
+		return -1;
+	}
+
+	if (pte->vsec == 0 && pte->vnsec == 0) {
+		/*
+		 * Remaining time was too short. Set it to
+		 * interval to make the timer armed and work.
+		 */
+		pt->val.it_value.tv_sec = pte->isec;
+		pt->val.it_value.tv_nsec = pte->insec;
+	} else {
+		pt->val.it_value.tv_sec = pte->vsec;
+		pt->val.it_value.tv_nsec = pte->vnsec;
+	}
+
+	if (!timespec_valid(&pt->val.it_value)) {
+		pr_err("Invalid timer value(posix)\n");
+		return -1;
+	}
+
+	pt->spt.it_id = pte->it_id;
+	pt->spt.clock_id = pte->clock_id;
+	pt->spt.si_signo = pte->si_signo;
+	pt->spt.it_sigev_notify = pte->it_sigev_notify;
+	pt->spt.sival_ptr = decode_pointer(pte->sival_ptr);
+	pt->overrun = pte->overrun;
+
+	return 0;
+}
+
+static int cmp_posix_timer_proc_id(const void *p1, const void *p2)
+{
+	return ((struct restore_posix_timer *)p1)->spt.it_id - ((struct restore_posix_timer *)p2)->spt.it_id;
+}
+
+static void sort_posix_timers(struct task_restore_args *ta)
+{
+	void *tmem;
+
+	/*
+	 * This is required for restorer's create_posix_timers(),
+	 * it will probe them one-by-one for the desired ID, since
+	 * kernel doesn't provide another API for timer creation
+	 * with given ID.
+	 */
+
+	if (ta->posix_timers_n > 0) {
+		tmem = rst_mem_remap_ptr((unsigned long)ta->posix_timers, RM_PRIVATE);
+		qsort(tmem, ta->posix_timers_n,
+				sizeof(struct restore_posix_timer),
+				cmp_posix_timer_proc_id);
+	}
+}
+
+/*
+ * Legacy posix timers restoration from CR_FD_POSIX_TIMERS
+ */
+
+static int prepare_posix_timers_from_fd(int pid, struct task_restore_args *ta)
+{
+	struct cr_img *img;
+	int ret = -1;
+	struct restore_posix_timer *t;
+
+	if (!deprecated_ok("Posix timers"))
+		return -1;
+
+	img = open_image(CR_FD_POSIX_TIMERS, O_RSTR, pid);
+	if (!img)
+		return -1;
+
+	ta->posix_timers_n = 0;
+	while (1) {
+		PosixTimerEntry *pte;
+
+		ret = pb_read_one_eof(img, &pte, PB_POSIX_TIMER);
+		if (ret <= 0)
+			break;
+
+		t = rst_mem_alloc(sizeof(struct restore_posix_timer), RM_PRIVATE);
+		if (!t)
+			break;
+
+		ret = decode_posix_timer(pte, t);
+		if (ret < 0)
+			break;
+
+		posix_timer_entry__free_unpacked(pte, NULL);
+		ta->posix_timers_n++;
+	}
+
+	close_image(img);
+	if (!ret)
+		sort_posix_timers(ta);
+
+	return ret;
+}
+
+static int prepare_posix_timers(int pid, struct task_restore_args *ta, CoreEntry *core)
+{
+	int i, ret = -1;
+	TaskTimersEntry *tte = core->tc->timers;
+	struct restore_posix_timer *t;
+
+	ta->posix_timers = (struct restore_posix_timer *)rst_mem_align_cpos(RM_PRIVATE);
+
+	if (!tte)
+		return prepare_posix_timers_from_fd(pid, ta);
+
+	ta->posix_timers_n = tte->n_posix;
+	for (i = 0; i < ta->posix_timers_n; i++) {
+		t = rst_mem_alloc(sizeof(struct restore_posix_timer), RM_PRIVATE);
+		if (!t)
+			goto out;
+
+		if (decode_posix_timer(tte->posix[i], t))
+			goto out;
+	}
+
+	ret = 0;
+	sort_posix_timers(ta);
+out:
+	return ret;
+}
+
+static inline int verify_cap_size(CredsEntry *ce)
+{
+	return ((ce->n_cap_inh == CR_CAP_SIZE) && (ce->n_cap_eff == CR_CAP_SIZE) &&
+		(ce->n_cap_prm == CR_CAP_SIZE) && (ce->n_cap_bnd == CR_CAP_SIZE));
 }
 
 static int prepare_mm(pid_t pid, struct task_restore_args *args)
@@ -2908,6 +3485,13 @@ static struct thread_creds_args *rst_prep_creds_args(CredsEntry *ce, unsigned lo
 	unsigned long this_pos;
 	struct thread_creds_args *args;
 
+	if (!verify_cap_size(ce)) {
+		pr_err("Caps size mismatch %d %d %d %d\n",
+		       (int)ce->n_cap_inh, (int)ce->n_cap_eff,
+		       (int)ce->n_cap_prm, (int)ce->n_cap_bnd);
+		return ERR_PTR(-EINVAL);
+	}
+
 	this_pos = rst_mem_align_cpos(RM_PRIVATE);
 
 	args = rst_mem_alloc(sizeof(*args), RM_PRIVATE);
@@ -2921,6 +3505,8 @@ static struct thread_creds_args *rst_prep_creds_args(CredsEntry *ce, unsigned lo
 		char *rendered = NULL, *profile;
 
 		profile = ce->lsm_profile;
+		if (opts.lsm_supplied)
+			profile = opts.lsm_profile;
 
 		if (validate_lsm(profile) < 0)
 			return ERR_PTR(-EINVAL);
