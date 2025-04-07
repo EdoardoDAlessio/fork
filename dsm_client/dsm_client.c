@@ -1025,15 +1025,19 @@ int main(int argc, char **argv)
 	/*Get VMA Areas*/
 	maps = pmparser_parse(pid);
 
+	printf("After parser!\n");
 	/*Connect to page Servers*/
 	sock = connect_server();
 	sleep(1);
 	page_data_socket = connect_page_data_server();
 	get_page_list_from_origin(sock);
-	
+
+	printf("Infection!\n");
 	/*Register UFFD with parasite and start UFFD Thread*/
 	uffd = do_infection(pid,sock);
 
+
+	printf("start page server!\n");
 	/*Start Page server */
 	listen_for_commands(sock,pid,uffd);
 	

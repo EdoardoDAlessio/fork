@@ -32,7 +32,7 @@ void parasite_cleanup(void) { }
 
 static int dump_single_page(void *args){
         
-        int p, tsock, ret; //tsock;
+        int p, tsock, ret;
         int nr_segs =1;
 
 	(void) ret;
