@@ -1,7 +1,7 @@
 #!/bin/bash
 # FIXME: Change it to the CRIU location
 DAPPER_PATH=./
-criu=$DAPPER_PATH/criu-3.15/criu/criu
+criu=$DAPPER_PATH/criu-4.0/criu/criu
 
 if [ ! -f "$criu" ]
 then

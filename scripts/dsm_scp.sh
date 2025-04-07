@@ -16,7 +16,7 @@ host=$2
 cd ~/${app}
 
 #time ~/print_ip.sh ${app} ${app} ;
-#time sudo python3 /users/nkhusain/TransProc_c/criu-3.15/crit/crit  recode . ./aarch64/ aarch64 ${app} ./bin/ y 
+#time sudo python3 /users/nkhusain/TransProc_c/criu-4.0/crit/crit  recode . ./aarch64/ aarch64 ${app} ./bin/ y 
 
 sudo rm -r aarch64/ ; mkdir aarch64; cp *.img  aarch64/
 

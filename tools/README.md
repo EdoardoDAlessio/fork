@@ -42,7 +42,7 @@ INFO  + The injected trap instr @ 0x401cb5   at main (attach_pid.c:135)
 Use CRIU to dump the suspended process, and check the dumped stack:
 ```
 ❯ ./dump.sh loop
-❯ ./criu-3.15/crit/crit x ./vanilla-dump sunw nm ../test/loop/loop
+❯ ./criu-4.0/crit/crit x ./vanilla-dump sunw nm ../test/loop/loop
 87282
 sp: 0x7fffffffddb8
 
@@ -64,7 +64,7 @@ Stack Contents:
 (RBP - 0x8) 0xffffffff00000000 (18446744069414584320)
 ```
 
-If we want to **restore** the process from the CRIU image, we can use `sudo ./criu-3.15/criu/criu restore -j -D vanilla-dump`. However, if we use `ps` to find `loop`, it shows the process state is **T** (T    stopped by job control signal). This is cause by the SIGSTOP signal. To continu, we can send a SIGCONT signal to the target process:
+If we want to **restore** the process from the CRIU image, we can use `sudo ./criu-4.0/criu/criu restore -j -D vanilla-dump`. However, if we use `ps` to find `loop`, it shows the process state is **T** (T    stopped by job control signal). This is cause by the SIGSTOP signal. To continu, we can send a SIGCONT signal to the target process:
 ```
 ❯ ps aux | grep loop/loop
 xiaogua+   87282  0.0  0.0   1084    44 pts/6    T+   12:04   0:00 ./test/loop/loop -a

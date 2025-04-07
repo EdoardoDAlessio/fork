@@ -3,7 +3,7 @@
 DAPPER_PATH=./
 BIN_PATH=~/
 
-criu=$DAPPER_PATH/criu-3.15/criu/criu
+criu=$DAPPER_PATH/criu-4.0/criu/criu
 tracer=$DAPPER_PATH/tools/tracer
 
 ## Check CRIU executable
@@ -50,11 +50,11 @@ sudo $criu dump -D $path -j -t $(pidof $1)
 sudo chown $(id -un):$(id -gn) $path -R
 
 ## Transform the process image with Dapper
-python3 $DAPPER_PATH/criu-3.15/crit/crit recode $path ./aarch64/ aarch64 $1 $path/bin/ n
+python3 $DAPPER_PATH/criu-4.0/crit/crit recode $path ./aarch64/ aarch64 $1 $path/bin/ n
 
 ## scp the transformed process images to the ARM node
 echo "Copying process images to the remote machine..."
 scp -q -r ./aarch64 arm:~
 
 ## Execute restoration on the remote node via "ssh -t"
-#ssh -t arm 'sudo ~/TransProc/criu-3.15/criu/criu restore -vv -o restore.log -j -D aarch64'
+#ssh -t arm 'sudo ~/TransProc/criu-4.0/criu/criu restore -vv -o restore.log -j -D aarch64'

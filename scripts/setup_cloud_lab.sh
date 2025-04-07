@@ -39,9 +39,9 @@ ssh -o StrictHostKeyChecking=no ${CHOST}  'bash -s'  <<EOT
 
 	git clone https://github.com/husainnk/thread_migrater.git
 	git clone https://github.com/husainnk/criu-dsm.git -b $BRANCH
-	make -C criu-dsm/criu-3.15/  -j8
+	make -C criu-dsm/criu-4.0/  -j8
 	if [ "$BRANCH" == "dsm_client" ] ; then
-		make -C criu-dsm/criu-3.15/dsm_client
+		make -C criu-dsm/criu-4.0/dsm_client
 	fi
 
 	chmod +x ./oh_my_zsh_install.sh ; ./oh_my_zsh_install.sh

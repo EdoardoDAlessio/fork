@@ -17,5 +17,5 @@ client=$2
 do_scp $app $client &
 
 sudo ~/criu-dsm/tools/tracer `pidof ${app}` ; 
-sudo ~/criu-dsm/criu-3.15/criu/criu  dump -t `pidof $app` --images-dir  ~/${app} --shell-job -v 
+sudo ~/criu-dsm/criu-4.0/criu/criu  dump -t `pidof $app` --images-dir  ~/${app} --shell-job -v 
 
