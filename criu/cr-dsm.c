@@ -645,10 +645,6 @@ int handle_invalidate_page(struct msg_info *dsm_msg,int pid,struct pstree_item *
 	if (ret < 0)
 		return -1;
 
-	ret = compel_rpc_sync(PARASITE_CMD_RUN_MADVISE, g_parasite_ctl);
-	if (ret < 0)
-		return -1;
-
 	val = compel_stop_daemon(g_parasite_ctl);
 	if (compel_cure(g_parasite_ctl))
 		pr_err("Can't cure (pid: %d) from parasite\n",pid);
@@ -774,8 +770,6 @@ int handle_page_data_request(int pid,int sk,struct msg_info *dsm_msg,struct pstr
 	val = compel_stop_daemon(g_parasite_ctl);
 	if (compel_cure(g_parasite_ctl))
 		pr_err("Can't cure (pid: %d) from parasite\n",pid);
-	//if (compel_resume_task(pid, state, state))
-	//	pr_err("Can't unseize task");
 
 	printf("continue the mainthread\n");
 	close(p[0]);
@@ -995,8 +989,7 @@ void start_scp(){
 	int fd, ret;
 	char msg[] = "START";
 	check_pipe_file();
-
-		fd = open("/tmp/pipe_scp", O_WRONLY);
+	fd = open("/tmp/pipe_scp", O_WRONLY);
         ret = write(fd, msg, strlen(msg)+1);
         close(fd);
 	fd = ret;//avoid unused warning

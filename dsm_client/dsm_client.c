@@ -213,34 +213,47 @@ static int connect_page_data_server(){
 	return sock;
 }
 
-
-static int connect_server(){
-
-	int sock = 0;//, valread;
+static int connect_server() {
+	int sock = 0;
 	struct sockaddr_in serv_addr;
+
+	printf("[INFO] Creating socket...\n");
 
 	// create socket
 	if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-		printf("\n Socket creation error \n");
+		perror("[ERROR] Socket creation failed");
 		return -1;
 	}
+	printf("[INFO] Socket created: fd=%d\n", sock);
 
 	// set server address
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_port = htons(8080);
-	if(inet_pton(AF_INET, SERVER_ADDR, &serv_addr.sin_addr)<=0) {
-		printf("\nInvalid address/ Address not supported \n");
+
+	printf("[INFO] Converting server address: %s\n", SERVER_ADDR);
+	if (inet_pton(AF_INET, SERVER_ADDR, &serv_addr.sin_addr) <= 0) {
+		perror("[ERROR] Invalid address / Address not supported");
+		close(sock);
 		return -1;
 	}
+
+	// log resolved address and port
+	char ip_str[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &serv_addr.sin_addr, ip_str, sizeof(ip_str));
+	printf("[INFO] Server address resolved: %s:%d\n", ip_str, ntohs(serv_addr.sin_port));
 
 	// connect to server
+	printf("[INFO] Connecting to server...\n");
 	if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-		printf("\nConnection Failed \n");
+		perror("[ERROR] Connection to server failed");
+		close(sock);
 		return -1;
 	}
 
+	printf("[INFO] Successfully connected to server %s:%d\n", ip_str, ntohs(serv_addr.sin_port));
 	return sock;
 }
+
 
 static int get_page_data_from_origin(int sock,long addr,unsigned char *page_content,bool is_write){
 
@@ -964,10 +977,26 @@ static int do_infection(int pid ,int sock)
 	}
 	printf("success:%d/%d\n",success,total_pages);
 
-	if ((uffdio_register.ioctls & UFFD_API_RANGE_IOCTLS) !=
-			UFFD_API_RANGE_IOCTLS) {
+	/*if ((uffdio_register.ioctls & UFFD_API_RANGE_IOCTLS) !=	UFFD_API_RANGE_IOCTLS) {
 		fprintf(stderr, "unexpected userfaultfd ioctl set\n");
-	}
+	}*/
+	if (uffdio_register.ioctls & UFFDIO_COPY)
+		printf("UFFDIO_COPY supported \n");
+	else
+		printf("UFFDIO_COPY not supported \n");
+	if (uffdio_register.ioctls & UFFDIO_ZEROPAGE)
+		printf("UFFDIO_ZEROPAGE supported \n");
+	else
+		printf("UFFDIO_ZEROPAGE not supported \n");
+
+	if (uffdio_register.ioctls & UFFDIO_WRITEPROTECT)
+		printf("UFFDIO_WRITEPROTECT supported \n");
+	else
+		printf("UFFDIO_WRITEPROTECT not supported \n");
+
+
+
+
 
 	printf("register Success\n");
 
