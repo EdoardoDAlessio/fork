@@ -184,6 +184,26 @@ int origin_has_shared_copy(long addr){
 
 }
 
+int get_tracer_pid(pid_t pid) {
+	char path[128];
+	char line[256];
+	FILE *f;
+	int tracer = 0;
+
+	snprintf(path, sizeof(path), "/proc/%d/status", pid);
+	f = fopen(path, "r");
+	if (!f) return -1;
+
+	while (fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "TracerPid:\t%d", &tracer) == 1) {
+			fclose(f);
+			return tracer;
+		}
+	}
+
+	fclose(f);
+	return -1;
+}
 
 
 void send_page_invalidate_msg(long addr,int fd){
@@ -613,11 +633,14 @@ int stealUFFD(int pid,struct pstree_item *item){
 	}
 
 	val = compel_stop_daemon(g_parasite_ctl);
+
+	pr_info("TracerPid (before): %d\n", get_tracer_pid(pid));
 	if (compel_cure(g_parasite_ctl))
 		pr_err("Can't cure (pid: %d) from parasite\n",pid);
+	pr_info("TracerPid (after): %d\n", get_tracer_pid(pid));
 
 	val = ptrace(PTRACE_CONT, pid, NULL, NULL);
-	pr_info("PTRACE_CONT %d\n",val);
+	pr_info("PTRACE_CONT %d, %d\n",val, pid);
 
 
 	printf("UFFD: %d\n",uffd);
@@ -636,6 +659,9 @@ int handle_invalidate_page(struct msg_info *dsm_msg,int pid,struct pstree_item *
 	pr_info("[msg_handler] PTRACE_INTERRUPT %d\n",val);
 
 	g_parasite_ctl =  parasite_infect_seized(pid, item, g_vma_area_list);
+	if (!g_parasite_ctl) {
+		printf("Can't infect (pid: %d) with parasite\n", pid);
+	}
 	args = compel_parasite_args(g_parasite_ctl, long);
 	*args = dsm_msg->page_addr;
 	page_list_data[addr_to_index(dsm_msg->page_addr)].state = PAGE_INVALID;
@@ -646,8 +672,7 @@ int handle_invalidate_page(struct msg_info *dsm_msg,int pid,struct pstree_item *
 		return -1;
 
 	val = compel_stop_daemon(g_parasite_ctl);
-	if (compel_cure(g_parasite_ctl))
-		pr_err("Can't cure (pid: %d) from parasite\n",pid);
+	if (compel_cure(g_parasite_ctl)) pr_err("Can't cure (pid: %d) from parasite\n",pid);
 
 	printf("continue the mainthread\n");
 	return 0;
@@ -665,6 +690,9 @@ int special_page_data_request(int pid,int sk,long page_addr,struct pstree_item *
 	pr_info("PTRACE_INTERRUPT %d\n",val);
 
 	g_parasite_ctl =  parasite_infect_seized(pid, item, g_vma_area_list);
+	if (!g_parasite_ctl) {
+		printf("Can't infect (pid: %d) with parasite\n", pid);
+	}
 	args = compel_parasite_args(g_parasite_ctl, long);
 	*args = page_addr;
 	printf("%lx\n",*args);
@@ -724,7 +752,9 @@ int handle_page_data_request(int pid,int sk,struct msg_info *dsm_msg,struct pstr
 	val = ptrace(PTRACE_INTERRUPT, pid, NULL, NULL);
 	pr_info("PTRACE_INTERRUPT %d\n",val);
 
-	g_parasite_ctl =  parasite_infect_seized(pid, item, g_vma_area_list);
+	g_parasite_ctl =  parasite_infect_seized(pid, item, g_vma_area_list);if (!g_parasite_ctl) {
+		printf("Can't infect (pid: %d) with parasite\n", pid);
+	}
 	args = compel_parasite_args(g_parasite_ctl, long);
 	*args = dsm_msg->page_addr;
 	printf("%lx\n",*args);
@@ -1038,7 +1068,7 @@ void start_dsm_server(struct pstree_item *item)
 	uffd = stealUFFD(main_pid,item);
 
 	create_page_list(item);
-
+	pr_info("TracerPid (after 1043 create page list): %d\n", get_tracer_pid(pid));
 	pr_info("nr_threads : %d\n",item->nr_threads);
 	for(i=0;i<item->nr_threads;i++)
 		pr_info("pid-%d : %d\n",i,item->threads[i].real);
@@ -1070,20 +1100,27 @@ void start_dsm_server(struct pstree_item *item)
 	param.pipe_fd_ack = p_ack[0];
 	msg_served = -1;
 
+	pr_info("TracerPid (after): %d\n", get_tracer_pid(pid));
+
 	pid = item->threads[0].real;
 	register_and_write_protect(uffd,item->threads[0].real);
 	printf("# uffd : %d\n",param.uffd);
 	pthread_create(&uffd_thread, NULL, handler, (void *)&param);
 
+	pr_info("TracerPid (after uffd): %d\n", get_tracer_pid(pid));
 	no_of_fds = n_remote_threads + 1;
 	last_process_uffd_fd = 0;
 	printf("# n_remote_threads : %d\n",n_remote_threads);
 	printf("# no_of_fds : %d\n",no_of_fds);
-
+	pr_info("TracerPid (before for loop): %d\n", get_tracer_pid(pid));
 	fds= (struct pollfd *)malloc(sizeof(struct pollfd) * no_of_fds);
 	for(;;){
 		val = ptrace(PTRACE_CONT,item->threads[0].real, NULL, NULL);
-	//	pr_info("PTRACE_CONT %d\n",val);
+		pr_info("PTRACE_CONT %d\n",val);
+		if (val == -1) {
+			perror("PTRACE_CONT");
+			pr_info("errno: %d\n", errno);
+		}
 
 
 		fds[0].fd = p[0];
