@@ -1068,7 +1068,7 @@ void start_dsm_server(struct pstree_item *item)
 	uffd = stealUFFD(main_pid,item);
 
 	create_page_list(item);
-	pr_info("TracerPid (after 1043 create page list): %d\n", get_tracer_pid(item->threads[i].real));
+	pr_info("TracerPid (after 1043 create page list): %d\n", get_tracer_pid(item->threads[0].real));
 	pr_info("nr_threads : %d\n",item->nr_threads);
 	for(i=0;i<item->nr_threads;i++)
 		pr_info("pid-%d : %d\n",i,item->threads[i].real);
