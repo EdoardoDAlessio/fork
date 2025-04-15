@@ -637,7 +637,7 @@ int stealUFFD(int pid,struct pstree_item *item){
 	pr_info("TracerPid (before): %d\n", get_tracer_pid(pid));
 	if (compel_cure(g_parasite_ctl))
 		pr_err("Can't cure (pid: %d) from parasite\n",pid);
-	pr_info("TracerPid (after): %d\n", get_tracer_pid(pid));
+	pr_info("TracerPid (after): %d\n", get_tracer_pid(item->threads[0].real));
 
 	val = ptrace(PTRACE_CONT, pid, NULL, NULL);
 	pr_info("PTRACE_CONT %d, %d\n",val, pid);
@@ -1068,7 +1068,7 @@ void start_dsm_server(struct pstree_item *item)
 	uffd = stealUFFD(main_pid,item);
 
 	create_page_list(item);
-	pr_info("TracerPid (after 1043 create page list): %d\n", get_tracer_pid(pid));
+	pr_info("TracerPid (after 1043 create page list): %d\n", get_tracer_pid(item->threads[i].real));
 	pr_info("nr_threads : %d\n",item->nr_threads);
 	for(i=0;i<item->nr_threads;i++)
 		pr_info("pid-%d : %d\n",i,item->threads[i].real);
@@ -1100,7 +1100,7 @@ void start_dsm_server(struct pstree_item *item)
 	param.pipe_fd_ack = p_ack[0];
 	msg_served = -1;
 
-	pr_info("TracerPid (after): %d\n", get_tracer_pid(pid));
+	pr_info("TracerPid (after): %d\n", get_tracer_pid(item->threads[0].real));
 
 	pid = item->threads[0].real;
 	register_and_write_protect(uffd,item->threads[0].real);
